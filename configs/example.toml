@@ -1,0 +1,31 @@
+# Copy to config.local.toml and choose three disjoint absolute paths.
+# This milestone implements automation only. No image restoration is performed.
+schema_version = 1
+
+[paths]
+input = "E:/Revive/.runtime/input"
+output = "E:/Revive/.runtime/output"
+app_data = "E:/Revive/.runtime/app"
+
+[watch]
+recursive = true
+process_existing = true
+quiet_seconds = 10
+stable_samples = 3
+sample_seconds = 5
+reconcile_seconds = 300
+
+[pipeline]
+adapter = "mock_copy"
+
+[resources]
+max_source_mib = 512
+max_input_megapixels = 40
+max_pending_jobs = 1000
+min_free_disk_mib = 512
+worker_timeout_seconds = 300
+
+[retry]
+max_attempts = 4
+delays_seconds = [60, 300, 1800]
+
