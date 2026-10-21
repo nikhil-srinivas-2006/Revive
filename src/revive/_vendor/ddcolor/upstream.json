@@ -1,0 +1,40 @@
+{
+  "revision": "2adb63f2656ac41cbdf7b894cddd94121a3faf13",
+  "files": {
+    "model.py": {
+      "source": "https://raw.githubusercontent.com/piddnad/DDColor/2adb63f2656ac41cbdf7b894cddd94121a3faf13/ddcolor/model.py",
+      "upstream_sha256": "e8e30115aa65a9558db33641c999001d1735c444402890898b47b2cc52b37c25",
+      "packaged_sha256": "011d18ece8c8a7eaaf0375c6a8c887734a11e7ec70cee011d9ada0a19aec6d47"
+    },
+    "unet.py": {
+      "source": "https://raw.githubusercontent.com/piddnad/DDColor/2adb63f2656ac41cbdf7b894cddd94121a3faf13/basicsr/archs/ddcolor_arch_utils/unet.py",
+      "upstream_sha256": "2b72fd6ef60d73f033cd3b2a3b4737d5371d4190b6410883e4d987d8417df1b2",
+      "packaged_sha256": "2b72fd6ef60d73f033cd3b2a3b4737d5371d4190b6410883e4d987d8417df1b2"
+    },
+    "convnext.py": {
+      "source": "https://raw.githubusercontent.com/piddnad/DDColor/2adb63f2656ac41cbdf7b894cddd94121a3faf13/basicsr/archs/ddcolor_arch_utils/convnext.py",
+      "upstream_sha256": "f03e339488570aa79e0690719546317a375ca85bd8a9e1e5f2c797cda033db45",
+      "packaged_sha256": "f03e339488570aa79e0690719546317a375ca85bd8a9e1e5f2c797cda033db45"
+    },
+    "transformer_utils.py": {
+      "source": "https://raw.githubusercontent.com/piddnad/DDColor/2adb63f2656ac41cbdf7b894cddd94121a3faf13/basicsr/archs/ddcolor_arch_utils/transformer_utils.py",
+      "upstream_sha256": "61d99be451ef0717eaa1bf84ecfd29f9c4224ac1e5a35d68a963c4b97f4dbd0b",
+      "packaged_sha256": "61d99be451ef0717eaa1bf84ecfd29f9c4224ac1e5a35d68a963c4b97f4dbd0b"
+    },
+    "position_encoding.py": {
+      "source": "https://raw.githubusercontent.com/piddnad/DDColor/2adb63f2656ac41cbdf7b894cddd94121a3faf13/basicsr/archs/ddcolor_arch_utils/position_encoding.py",
+      "upstream_sha256": "beb5b3b52f2cc4f2dfc9f312cdc5d712468ff1d2985be7471a94a0c37a8c01d6",
+      "packaged_sha256": "beb5b3b52f2cc4f2dfc9f312cdc5d712468ff1d2985be7471a94a0c37a8c01d6"
+    },
+    "LICENSE": {
+      "source": "https://raw.githubusercontent.com/piddnad/DDColor/2adb63f2656ac41cbdf7b894cddd94121a3faf13/LICENSE",
+      "upstream_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
+      "packaged_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    "LICENSE-ConvNeXt": {
+      "source": "https://github.com/facebookresearch/ConvNeXt/blob/main/LICENSE",
+      "blob_sha": "b93be90515ccd0b9daedaa589e42bf5929693f1f",
+      "packaged_sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+    }
+  }
+}

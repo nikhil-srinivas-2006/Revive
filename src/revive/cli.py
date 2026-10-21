@@ -5,6 +5,7 @@ import signal
 import sqlite3
 import sys
 import threading
+from importlib.util import find_spec
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -23,6 +24,11 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("validate-config")
     commands.add_parser("doctor")
+    models = commands.add_parser(
+        "models",
+        help="Explicit model setup; normal processing never downloads weights.",
+    )
+    models.add_argument("action", choices=("status", "install"))
     run = commands.add_parser("run")
     run.add_argument(
         "--once",
@@ -39,13 +45,32 @@ def main(argv=None):
         config = load_config(args.config)
         if args.command == "validate-config":
             print(
-                f"Configuration valid. Adapter: {config.adapter}; AI processing is unavailable."
+                f"Configuration valid. Adapter: {config.adapter}; colorization enabled: {config.colorization_enabled}."
             )
+            return 0
+        if args.command == "models":
+            from .models import install_model, model_status
+
+            if args.action == "status":
+                print(json.dumps(model_status(config.app_data), indent=2))
+            else:
+                config.app_data.mkdir(parents=True, exist_ok=True)
+                with InstanceLock(
+                    within(config.app_data, config.app_data / "monitor.lock")
+                ):
+                    print(json.dumps(install_model(config.app_data), indent=2))
             return 0
         if args.command == "doctor":
             from importlib.metadata import version
 
             from PIL import features
+
+            from .models import model_status
+
+            asset = model_status(config.app_data)
+            dependencies = all(
+                find_spec(name) is not None for name in ("torch", "numpy", "cv2")
+            )
 
             print(
                 json.dumps(
@@ -59,7 +84,13 @@ def main(argv=None):
                         "effective_worker_memory_mib": config.worker_settings()[
                             "worker_memory_mib"
                         ],
-                        "ai_available": False,
+                        "effective_worker_commit_mib": config.worker_settings()[
+                            "worker_commit_mib"
+                        ],
+                        "ai_available": bool(dependencies and asset["verified"]),
+                        "colorization_enabled": config.colorization_enabled,
+                        "colorization_dependencies_installed": dependencies,
+                        "model_verified": asset["verified"],
                     },
                     indent=2,
                 )

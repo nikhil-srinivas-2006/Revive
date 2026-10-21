@@ -3,7 +3,7 @@ import json
 import os
 import tomllib
 from dataclasses import asdict, dataclass
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .errors import ReviveError
@@ -24,6 +24,11 @@ class Config:
     adapter: str = "mock_copy"
     denoise_strength: float = 0
     contrast_strength: float = 0
+    colorization_enabled: bool = False
+    colorization_strength: float = 0.85
+    colorize_sepia: bool = False
+    colorization_input_size: int = 256
+    cpu_threads: int = 2
     max_source_mib: int = 512
     max_input_megapixels: int = 40
     max_pending_jobs: int = 1000
@@ -54,6 +59,32 @@ class Config:
                 "BACKEND_UNSUPPORTED",
                 "Supported adapters are mock_copy and normalize_png.",
             )
+        if (
+            type(self.colorization_enabled) is not bool
+            or type(self.colorize_sepia) is not bool
+        ):
+            raise ReviveError(
+                "CONFIG_INVALID", "Colorization switches must be boolean."
+            )
+        if self.colorization_enabled and self.adapter != "normalize_png":
+            raise ReviveError(
+                "CONFIG_INVALID", "Colorization requires the PNG adapter."
+            )
+        if (
+            type(self.colorization_strength) not in (int, float)
+            or not 0 <= self.colorization_strength <= 1
+        ):
+            raise ReviveError(
+                "CONFIG_INVALID", "Colorization strength must be between 0 and 1."
+            )
+        if type(
+            self.colorization_input_size
+        ) is not int or self.colorization_input_size not in (256, 512):
+            raise ReviveError(
+                "CONFIG_INVALID", "Colorization input_size must be 256 or 512."
+            )
+        if type(self.cpu_threads) is not int or not 1 <= self.cpu_threads <= 8:
+            raise ReviveError("CONFIG_INVALID", "cpu_threads must be between 1 and 8.")
         for name in ("denoise_strength", "contrast_strength"):
             value = getattr(self, name)
             if type(value) not in (int, float) or not 0 <= value <= 0.25:
@@ -120,10 +151,27 @@ class Config:
                 contrast_strength=self.contrast_strength,
                 pillow_version=version("Pillow"),
             )
+        if self.colorization_enabled:
+            from .models import SOURCE_REVISION, WEIGHT_SHA256
+
+            policy.update(
+                colorization_protocol=1,
+                colorization_model=WEIGHT_SHA256,
+                model_source=SOURCE_REVISION,
+                colorization_strength=self.colorization_strength,
+                colorize_sepia=self.colorize_sepia,
+                input_size=self.colorization_input_size,
+                cpu_threads=self.cpu_threads,
+            )
+            for package in ("torch", "numpy", "opencv-python-headless"):
+                try:
+                    policy[package] = version(package)
+                except PackageNotFoundError:
+                    policy[package] = "unavailable"
         return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
     def worker_settings(self):
-        from .resources import worker_budget_mib
+        from .resources import worker_budget_mib, worker_commit_budget_mib
 
         return {
             "max_input_megapixels": self.max_input_megapixels,
@@ -131,7 +179,14 @@ class Config:
             "denoise_strength": self.denoise_strength,
             "contrast_strength": self.contrast_strength,
             "worker_memory_mib": worker_budget_mib(self.worker_memory_mib),
+            "worker_commit_mib": worker_commit_budget_mib(self.worker_memory_mib),
             "min_free_disk_mib": self.min_free_disk_mib,
+            "colorization_enabled": self.colorization_enabled,
+            "colorization_strength": self.colorization_strength,
+            "colorize_sepia": self.colorize_sepia,
+            "colorization_input_size": self.colorization_input_size,
+            "cpu_threads": self.cpu_threads,
+            "app_data": str(self.app_data),
         }
 
 
@@ -150,6 +205,7 @@ def load_config(path: Path) -> Config:
                 "reconcile_seconds",
             },
             "pipeline": {"adapter", "denoise_strength", "contrast_strength"},
+            "colorization": {"enabled", "strength", "include_sepia", "input_size"},
             "resources": {
                 "max_source_mib",
                 "max_input_megapixels",
@@ -157,6 +213,7 @@ def load_config(path: Path) -> Config:
                 "min_free_disk_mib",
                 "worker_timeout_seconds",
                 "worker_memory_mib",
+                "cpu_threads",
             },
             "retry": {"max_attempts", "delays_seconds"},
         }
@@ -169,7 +226,16 @@ def load_config(path: Path) -> Config:
             section = raw.get(group, {})
             if not isinstance(section, dict) or set(section) - allowed:
                 raise ValueError(f"Unknown setting in {group}")
-            values.update(section)
+            if group == "colorization":
+                aliases = {
+                    "enabled": "colorization_enabled",
+                    "strength": "colorization_strength",
+                    "include_sepia": "colorize_sepia",
+                    "input_size": "colorization_input_size",
+                }
+                values.update({aliases[key]: value for key, value in section.items()})
+            else:
+                values.update(section)
         for name in groups["paths"]:
             value = values[name]
             if not isinstance(value, str) or not value:
