@@ -28,6 +28,10 @@ class Config:
     colorization_strength: float = 0.85
     colorize_sepia: bool = False
     colorization_input_size: int = 256
+    sr_enabled: bool = False
+    sr_target_long_edge: int = 4096
+    sr_tile_size: int = 128
+    max_output_megapixels: int = 64
     cpu_threads: int = 2
     max_source_mib: int = 512
     max_input_megapixels: int = 40
@@ -70,6 +74,25 @@ class Config:
             raise ReviveError(
                 "CONFIG_INVALID", "Colorization requires the PNG adapter."
             )
+        if type(self.sr_enabled) is not bool:
+            raise ReviveError(
+                "CONFIG_INVALID", "Super-resolution enabled must be boolean."
+            )
+        if self.sr_enabled and self.adapter != "normalize_png":
+            raise ReviveError(
+                "CONFIG_INVALID", "Super-resolution requires the PNG adapter."
+            )
+        if (
+            type(self.sr_target_long_edge) is not int
+            or not 64 <= self.sr_target_long_edge <= 4096
+        ):
+            raise ReviveError(
+                "CONFIG_INVALID", "Super-resolution target_long_edge must be 64..4096."
+            )
+        if type(self.sr_tile_size) is not int or self.sr_tile_size not in (64, 128):
+            raise ReviveError(
+                "CONFIG_INVALID", "Super-resolution tile_size must be 64 or 128."
+            )
         if (
             type(self.colorization_strength) not in (int, float)
             or not 0 <= self.colorization_strength <= 1
@@ -107,6 +130,7 @@ class Config:
             "stable_samples",
             "max_source_mib",
             "max_input_megapixels",
+            "max_output_megapixels",
             "max_pending_jobs",
             "min_free_disk_mib",
             "max_attempts",
@@ -168,6 +192,25 @@ class Config:
                     policy[package] = version(package)
                 except PackageNotFoundError:
                     policy[package] = "unavailable"
+        if self.sr_enabled:
+            from .swinir_model import SOURCE_REVISION as SR_SOURCE
+            from .swinir_model import WEIGHT_SHA256 as SR_HASH
+
+            policy.update(
+                sr_protocol=1,
+                sr_model=SR_HASH,
+                sr_source=SR_SOURCE,
+                sr_target_long_edge=self.sr_target_long_edge,
+                sr_tile_size=self.sr_tile_size,
+                sr_context=32,
+                max_output_megapixels=self.max_output_megapixels,
+                sr_cpu_threads=self.cpu_threads,
+            )
+            for package in ("torch", "numpy"):
+                try:
+                    policy[package] = version(package)
+                except PackageNotFoundError:
+                    policy[package] = "unavailable"
         return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
     def worker_settings(self):
@@ -185,6 +228,10 @@ class Config:
             "colorization_strength": self.colorization_strength,
             "colorize_sepia": self.colorize_sepia,
             "colorization_input_size": self.colorization_input_size,
+            "sr_enabled": self.sr_enabled,
+            "sr_target_long_edge": self.sr_target_long_edge,
+            "sr_tile_size": self.sr_tile_size,
+            "max_output_megapixels": self.max_output_megapixels,
             "cpu_threads": self.cpu_threads,
             "app_data": str(self.app_data),
         }
@@ -206,9 +253,11 @@ def load_config(path: Path) -> Config:
             },
             "pipeline": {"adapter", "denoise_strength", "contrast_strength"},
             "colorization": {"enabled", "strength", "include_sepia", "input_size"},
+            "super_resolution": {"enabled", "target_long_edge", "tile_size"},
             "resources": {
                 "max_source_mib",
                 "max_input_megapixels",
+                "max_output_megapixels",
                 "max_pending_jobs",
                 "min_free_disk_mib",
                 "worker_timeout_seconds",
@@ -232,6 +281,13 @@ def load_config(path: Path) -> Config:
                     "strength": "colorization_strength",
                     "include_sepia": "colorize_sepia",
                     "input_size": "colorization_input_size",
+                }
+                values.update({aliases[key]: value for key, value in section.items()})
+            elif group == "super_resolution":
+                aliases = {
+                    "enabled": "sr_enabled",
+                    "target_long_edge": "sr_target_long_edge",
+                    "tile_size": "sr_tile_size",
                 }
                 values.update({aliases[key]: value for key, value in section.items()})
             else:

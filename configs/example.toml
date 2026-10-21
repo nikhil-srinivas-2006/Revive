@@ -30,9 +30,16 @@ strength = 0.85
 include_sepia = false
 input_size = 256
 
+[super_resolution]
+# Optional CPU SwinIR x2; install its checkpoint explicitly before enabling.
+enabled = false
+target_long_edge = 4096
+tile_size = 128
+
 [resources]
 max_source_mib = 512
 max_input_megapixels = 40
+max_output_megapixels = 64
 max_pending_jobs = 1000
 min_free_disk_mib = 512
 worker_timeout_seconds = 300

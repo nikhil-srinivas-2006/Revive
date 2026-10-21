@@ -2,7 +2,7 @@
 
 Inspection measurements are heuristics, not quality or historical-fidelity scores.
 Optional colorization delegates chroma prediction to a separately loaded local
-adapter. No face detector, face restoration, or output resizing is performed here.
+adapter. Optional super-resolution follows colorization. No face processing occurs.
 """
 
 import base64
@@ -277,6 +277,15 @@ def normalize(image, output, settings, source_info, original_metadata):
         normalized, colorization = colorize_if_needed(
             normalized, inspection, settings, stages, notes
         )
+        from .super_resolution import upscale_if_needed
+
+        normalized, super_resolution = upscale_if_needed(
+            normalized, settings, stages, notes
+        )
+        # Dimensions must describe the final derivative after all resizing.
+        if 34665 in exif:
+            details = exif.get_ifd(34665)
+            details[40962], details[40963] = normalized.size
         inferred = colorization["applied"]
         stages.append("png_encode")
         metadata = {
@@ -290,7 +299,10 @@ def normalize(image, output, settings, source_info, original_metadata):
             "stages": stages,
             "colors_inferred": inferred,
             "colorization": colorization,
-            "restoration_performed": any(
+            "super_resolution": super_resolution,
+            "details_inferred": super_resolution["applied"],
+            "restoration_performed": super_resolution["applied"]
+            or any(
                 s in stages for s in ("mild_median_denoise", "mild_tonal_adjustment")
             ),
             "source": source_info,
@@ -320,6 +332,14 @@ def normalize(image, output, settings, source_info, original_metadata):
                         else {}
                     ),
                     "restoration_performed": metadata["restoration_performed"],
+                    **(
+                        {
+                            "super_resolution": super_resolution,
+                            "details_inferred": super_resolution["applied"],
+                        }
+                        if settings.get("sr_enabled")
+                        else {}
+                    ),
                 },
                 sort_keys=True,
             ),

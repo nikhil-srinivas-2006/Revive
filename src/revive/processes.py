@@ -1,11 +1,89 @@
 """Worker lifetime containment without a heavyweight Windows dependency."""
 
 import os
+import subprocess
 
 from .errors import ReviveError
 
 
 class WorkerJob:
+    def popen(self, args, **kwargs):
+        """Assign before execution, including before a Windows venv launcher forks.
+
+        Popen closes the primary thread handle. Toolhelp finds that still-suspended
+        thread so documented ResumeThread can start it after job assignment.
+        """
+        if os.name == "nt":
+            if self.handle is None:
+                raise ReviveError("WORKER_CONTAINMENT", "Worker job is already closed.")
+            kwargs["creationflags"] = (
+                kwargs.get("creationflags", 0) | 0x4
+            )  # CREATE_SUSPENDED
+        process = subprocess.Popen(args, **kwargs)
+        try:
+            self.assign(process.pid)
+            if os.name == "nt":
+                self._resume(process.pid)
+            return process
+        except BaseException:
+            self.close()
+            process.kill()
+            process.communicate()
+            raise
+
+    def _resume(self, pid):
+        import ctypes
+        from ctypes import wintypes
+
+        class ThreadEntry(ctypes.Structure):
+            _fields_ = [
+                ("size", wintypes.DWORD),
+                ("usage", wintypes.DWORD),
+                ("tid", wintypes.DWORD),
+                ("pid", wintypes.DWORD),
+                ("priority", wintypes.LONG),
+                ("delta", wintypes.LONG),
+                ("flags", wintypes.DWORD),
+            ]
+
+        kernel = self.kernel
+        kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+        kernel.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+        kernel.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenThread.restype = wintypes.HANDLE
+        kernel.ResumeThread.argtypes = [wintypes.HANDLE]
+        kernel.ResumeThread.restype = wintypes.DWORD
+        snapshot = kernel.CreateToolhelp32Snapshot(0x4, 0)  # TH32CS_SNAPTHREAD
+        if snapshot == wintypes.HANDLE(-1).value:
+            raise ReviveError(
+                "WORKER_CONTAINMENT", "Cannot locate suspended worker thread."
+            )
+        try:
+            entry = ThreadEntry()
+            entry.size = ctypes.sizeof(entry)
+            available = kernel.Thread32First(snapshot, ctypes.byref(entry))
+            while available:
+                if entry.pid == pid:
+                    thread = kernel.OpenThread(
+                        0x2, False, entry.tid
+                    )  # THREAD_SUSPEND_RESUME
+                    if not thread:
+                        break
+                    try:
+                        if kernel.ResumeThread(thread) == 1:
+                            return
+                    finally:
+                        kernel.CloseHandle(thread)
+                    break
+                available = kernel.Thread32Next(snapshot, ctypes.byref(entry))
+            raise ReviveError(
+                "WORKER_CONTAINMENT", "Cannot start the contained worker thread."
+            )
+        finally:
+            kernel.CloseHandle(snapshot)
+
     def __init__(self, memory_mib=0):
         self.handle = None
         if os.name != "nt":

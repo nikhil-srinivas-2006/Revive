@@ -74,7 +74,7 @@ def main():
     containment = WorkerJob(commit)
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
-        with subprocess.Popen(
+        with containment.popen(
             [
                 sys.executable,
                 str(Path(__file__).resolve()),
@@ -90,9 +90,9 @@ def main():
             creationflags=flags,
         ) as process:
             try:
-                containment.assign(process.pid)
                 out, err = process.communicate(timeout=120)
             except BaseException:
+                containment.close()
                 process.kill()
                 process.communicate()
                 raise

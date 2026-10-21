@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import sys
+import time
 import warnings
 from pathlib import Path
 
@@ -36,6 +37,7 @@ def _header(image, source):
 
 
 def process(request):
+    started = time.perf_counter()
     from PIL import Image, UnidentifiedImageError
 
     source, output = Path(request["snapshot"]), Path(request["output"])
@@ -65,6 +67,43 @@ def process(request):
                 estimate = (
                     pixels * (64 if adapter == "normalize_png" else 8) + 64 * 1024**2
                 )
+                sr_disk = 0
+                if settings.get("sr_enabled"):
+                    from .super_resolution import requirements
+
+                    # Transparent inputs bypass SR; their ordinary decode still
+                    # needs the baseline budget below.
+                    transparent = (
+                        image.mode in ("RGBA", "LA", "PA")
+                        or "transparency" in image.info
+                    )
+                    if (
+                        transparent
+                        and pixels
+                        > settings.get("max_output_megapixels", 64) * 1_000_000
+                    ):
+                        raise ReviveError(
+                            "IMAGE_LIMIT",
+                            "Unchanged transparent output exceeds the output pixel limit.",
+                        )
+                    if not transparent:
+                        _, physical, commit, sr_disk = requirements(
+                            image.size, settings
+                        )
+                        if physical:
+                            estimate = max(estimate, physical * 1024**2)
+                            if (
+                                settings.get(
+                                    "worker_commit_mib",
+                                    settings.get("worker_memory_mib", 512),
+                                )
+                                < commit
+                            ):
+                                raise ReviveError(
+                                    "RAM_ADMISSION",
+                                    "Committed-memory budget is below the super-resolution safety estimate.",
+                                    True,
+                                )
                 if estimate > memory_limit:
                     raise ReviveError(
                         "RAM_ADMISSION",
@@ -73,8 +112,7 @@ def process(request):
                     )
                 if adapter == "normalize_png":
                     required_disk = (
-                        pixels * 4
-                        + 4 * 1024**2
+                        max(pixels * 4 + 4 * 1024**2, sr_disk)
                         + settings.get("min_free_disk_mib", 0) * 1024**2
                     )
                     if shutil.disk_usage(output.parent).free < required_disk:
@@ -129,6 +167,14 @@ def process(request):
         ) from exc
     with output.open("rb") as stream:
         response["hash"] = hashlib.file_digest(stream, "sha256").hexdigest()
+    if settings.get("sr_enabled"):
+        from .resources import process_memory_mib
+
+        # Central manifest only: timing must not make the PNG bytes nondeterministic.
+        response["metadata"]["worker_measurements"] = {
+            "seconds": round(time.perf_counter() - started, 3),
+            **process_memory_mib(),
+        }
     return response
 
 

@@ -475,18 +475,26 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+super-resolution = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "numpy", marker = "extra == 'colorization'", specifier = ">=2,<3" },
+    { name = "numpy", marker = "extra == 'super-resolution'", specifier = ">=2,<3" },
     { name = "opencv-python-headless", marker = "extra == 'colorization'", specifier = ">=4.10,<5" },
     { name = "pillow", specifier = ">=12.1.1,<14" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11,<1" },
-    { name = "torch", marker = "extra == 'colorization'", specifier = ">=2.6,<3", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "revive-local", extra = "colorization" } },
+    { name = "torch", marker = "extra == 'colorization'", specifier = ">=2.6,<3", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "extra == 'super-resolution'", specifier = ">=2.6,<3", index = "https://download.pytorch.org/whl/cpu" },
     { name = "watchdog", specifier = ">=6,<7" },
 ]
-provides-extras = ["dev", "colorization"]
+provides-extras = ["dev", "colorization", "super-resolution"]
 
 [[package]]
 name = "ruff"

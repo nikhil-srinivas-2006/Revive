@@ -228,6 +228,48 @@ normalization-only path. The author checkpoint has been installed for qualificat
 See [qualification evidence and limits](docs/COLORIZATION_QUALIFICATION.md) for
 source licenses, asset digests, measured memory, and outstanding review gates.
 
+## Optional 2x super-resolution
+
+SwinIR lightweight x2 is available as an offline CPU stage after normalization,
+cleanup and optional colorization. Install the extra and its selected checkpoint
+explicitly before enabling it:
+
+```powershell
+uv sync --locked --extra dev --extra colorization --extra super-resolution --python 3.11
+revive --config config.local.toml models install --model swinir_lightweight_x2
+revive --config config.local.toml models status --model swinir_lightweight_x2
+```
+
+The `colorization` extra can be omitted when only upscaling is needed. Keep the
+extras you use in subsequent `uv sync` commands. The default `models install`
+command still selects DDColor Tiny. Both checkpoints belong to the configuration's
+application directory; a separate development configuration uses separate assets.
+
+```toml
+[super_resolution]
+enabled = true
+target_long_edge = 4096
+tile_size = 128
+```
+
+Dimensions grow by at most 2x toward the target long edge. Larger originals retain
+their dimensions. Transparency bypasses inference and remains at its original size;
+exactly neutral RGB images remain neutral after reconstruction. Metadata records
+whether enlargement occurred and marks reconstructed details as inferred. Applied
+outputs use `_upscaled_` or `_colorized_upscaled_` filenames.
+
+Inference uses 8-pixel-aligned tiles with 32 pixels of context and no full-image
+float tensor. Finite context approximates a full-frame pass. The 64-pixel option
+reduces tile workspace at the cost of more repeated computation. RAM, Windows
+commit and output-disk admission account for larger derivatives; an enabled model
+failure does not silently fall back to interpolation. CPU processing can take
+minutes and still hit the configured deadline. The shared template remains
+disabled pending visual review and broader laptop qualification.
+
+Development configuration: `.runtime/super_resolution.toml`; outputs:
+`.runtime/upscaled_output/`. See [qualification evidence](docs/SUPER_RESOLUTION_QUALIFICATION.md)
+for source/weight digests, measurements, resource limits and remaining gates.
+
 ## Current boundaries
 
 Application path checks are **not OS-enforced isolation**. The normal user account
@@ -241,7 +283,7 @@ A paused copy can appear stable. A producer's temporary file followed by final r
 is preferable where available. Notifications currently use durable incidents and
 logs only. Large-image memory measurements, notification delivery, suspend-aware
 timeouts, disk-history retention, and sustained archive-scale event handling remain
-release gates. No GPU backend, face enhancement, super-resolution, scratch
+release gates. No GPU backend, face enhancement, scratch
 reconstruction or Drive API exists yet. Colorization remains disabled in the shared
 template until users explicitly complete setup and review representative results.
 
