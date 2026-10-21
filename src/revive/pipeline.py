@@ -1,7 +1,8 @@
 """Conservative image normalization, used only inside an isolated worker.
 
 Inspection measurements are heuristics, not quality or historical-fidelity scores.
-No face detector, learned restoration, colorization, or resizing is performed here.
+Optional colorization delegates chroma prediction to a separately loaded local
+adapter. No face detector, face restoration, or output resizing is performed here.
 """
 
 import base64
@@ -271,6 +272,12 @@ def normalize(image, output, settings, source_info, original_metadata):
             notes.append("ORIGINAL_XMP_RETAINED_IN_MANIFEST")
         inspection = inspect_pixels(normalized)
         normalized = cleanup(normalized, inspection, settings, stages, notes)
+        from .colorization import colorize_if_needed
+
+        normalized, colorization = colorize_if_needed(
+            normalized, inspection, settings, stages, notes
+        )
+        inferred = colorization["applied"]
         stages.append("png_encode")
         metadata = {
             "adapter": "normalize_png",
@@ -281,7 +288,8 @@ def normalize(image, output, settings, source_info, original_metadata):
                 "littlecms": features.version("littlecms2"),
             },
             "stages": stages,
-            "colors_inferred": False,
+            "colors_inferred": inferred,
+            "colorization": colorization,
             "restoration_performed": any(
                 s in stages for s in ("mild_median_denoise", "mild_tonal_adjustment")
             ),
@@ -305,7 +313,12 @@ def normalize(image, output, settings, source_info, original_metadata):
                     "adapter": "normalize_png",
                     "pipeline_version": 1,
                     "stages": stages,
-                    "colors_inferred": False,
+                    "colors_inferred": inferred,
+                    **(
+                        {"colorization": colorization}
+                        if settings.get("colorization_enabled")
+                        else {}
+                    ),
                     "restoration_performed": metadata["restoration_performed"],
                 },
                 sort_keys=True,

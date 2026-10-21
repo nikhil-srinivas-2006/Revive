@@ -22,6 +22,14 @@ adapter = "normalize_png"
 denoise_strength = 0
 contrast_strength = 0
 
+[colorization]
+# Optional local DDColor Tiny stage. Install weights explicitly before enabling.
+enabled = false
+strength = 0.85
+# Sepia is ambiguous; keep disabled until results have been reviewed.
+include_sepia = false
+input_size = 256
+
 [resources]
 max_source_mib = 512
 max_input_megapixels = 40
@@ -30,6 +38,7 @@ min_free_disk_mib = 512
 worker_timeout_seconds = 300
 # 0 = conservative automatic budget from total/available physical RAM.
 worker_memory_mib = 0
+cpu_threads = 2
 
 [retry]
 max_attempts = 4

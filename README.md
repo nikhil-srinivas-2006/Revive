@@ -3,8 +3,9 @@
 A local Windows photo-processing engine under development. The **normalize_png**
 adapter inspects photographs, applies EXIF orientation once, converts valid embedded
 profiles to sRGB, and publishes lossless 8-bit PNG derivatives. Originals remain
-unchanged. Optional conventional cleanup is disabled by default. No AI colorization,
-super-resolution, or face restoration is implemented yet.
+unchanged. Optional conventional cleanup is disabled by default. An optional local
+**DDColor Tiny** stage now colorizes eligible grayscale inputs. Super-resolution
+and face restoration are not implemented yet.
 
 The **mock_copy** adapter remains available for byte-identical automation tests.
 Output names distinguish `_normalized_` derivatives from `_mockcopy_` copies.
@@ -96,8 +97,8 @@ relative queue entries from being interpreted against a different collection.
 - Durable SQLite WAL queue, revision tracking, retries, startup recovery, provenance.
 - Separate worker per job; no Pillow or AI framework imported by the monitor.
 - Windows Job Objects terminate the worker if its monitor dies.
-- An automatic memory budget and pre-decode admission checks protect responsiveness;
-  the Windows worker also has an enforced process-memory ceiling.
+- Automatic physical-RAM admission and pre-decode checks protect responsiveness;
+  the Windows worker also has a separate enforced committed-memory ceiling.
 - Source files opened for reading only; originals and metadata remain byte-identical.
 - Same-volume, atomic no-replace publication using hard links; NTFS is the initial
   target. Unsupported filesystems fail explicitly rather than overwrite a result.
@@ -158,14 +159,74 @@ conservative gate. Transparency bypasses cleanup. Keep strengths at zero for
 faithful normalization; review representative results before enabling cleanup.
 Applied stages and skip reasons are recorded; inferred colors are always false.
 
-`[resources].worker_memory_mib = 0` selects the smaller of 2 GiB, one quarter of
-physical RAM, and half the currently available RAM; unavailable OS data falls back
-to 512 MiB. A positive value overrides it. Admission uses a conservative allocation
-estimate, not an exact predictor. Memory pressure can defer a photo; Windows can
-terminate a worker that breaches its process-memory ceiling. Other operating
+`[resources].worker_memory_mib = 0` selects a physical-RAM admission budget from
+the smaller of 2 GiB, one quarter of physical RAM, and half the currently available
+RAM; unavailable OS data falls back to 512 MiB. Windows additionally computes a
+committed-memory ceiling from the smaller of 2 GiB, one quarter of physical RAM,
+and half the available system commit. Resident and committed memory are different
+quantities; neither setting is a hard resident-working-set cap. A positive value
+overrides both budgets. Admission uses a conservative allocation estimate, not an
+exact predictor. Memory pressure can defer a photo; Windows can terminate a worker
+that breaches its commit ceiling. Other operating
 systems currently have admission checks only and are not production-qualified.
 Disk preflight reserves room for the uncompressed PNG estimate and configured
 free-space reserve; actual disk errors remain recoverable.
+
+## Optional local colorization
+
+Use a separate output/application-data directory when trying colorization on photos
+already completed by another pipeline. Choose those directories before installing
+weights: models are stored under the selected application-data root.
+
+```powershell
+uv sync --locked --extra dev --extra colorization --python 3.11
+.venv\Scripts\python.exe -m revive --config config.local.toml models status
+.venv\Scripts\python.exe -m revive --config config.local.toml models install
+```
+
+`models install` explicitly downloads the author's pinned 220 MB Apache-2.0
+checkpoint and verifies its published SHA-256 before publication. It never
+overwrites a conflicting asset. Runtime, doctor and model status operate offline;
+missing/corrupt weights produce actionable errors. For offline setup, copy the exact
+checkpoint to `<app_data>/models/ddcolor_tiny/pytorch_model.bin` and verify it with
+`models status`. No training dependencies, torchvision, remote-code loader or cloud
+inference are used. Keep the optional extra in subsequent `uv sync` commands if
+colorization is enabled; base-only sync removes optional packages.
+
+```toml
+[colorization]
+enabled = true
+strength = 0.85
+include_sepia = false
+input_size = 256
+```
+
+Enable only after setup and representative visual review. Automatic grayscale
+selection checks every pixel to catch small colored details hidden by the inspection
+thumbnail. Color/uncertain images and transparency bypass the model. Sepia remains
+opt-in because its history cannot be reliably inferred. Zero strength also bypasses
+inference. A configured colorization failure does not silently become successful
+uncolorized output for an eligible photo.
+
+Only inferred Lab chroma is used, combined with the normalized/optionally cleaned
+image's luminance in memory-bounded strips. Chroma is reduced where gamut conversion
+would exceed the 1.0 Lab L error guard. Output size/composition are retained. This
+does not guarantee correct colors, identity, or visual improvement. PNG provenance
+and the central manifest explicitly mark inferred colors and model versions.
+Outputs are labeled `_colorized_` when inference was applied; bypassed photos use
+`_normalized_`.
+
+DDColor needs more RAM than normalization. Conservative model admission estimates
+can defer large photos even when the decoder's pixel limit permits them. The 512
+view is experimental and may require a larger explicitly configured commit budget;
+the automatic cap is not raised to force a job through. CPU threads default to two
+and can be configured from 1–8 in `[resources].cpu_threads`. No GPU is allocated.
+
+The workspace's separate qualification configuration is `.runtime/colorization.toml`.
+Its outputs are in `.runtime/colorized_output/`; `config.local.toml` still uses the
+normalization-only path. The author checkpoint has been installed for qualification.
+See [qualification evidence and limits](docs/COLORIZATION_QUALIFICATION.md) for
+source licenses, asset digests, measured memory, and outstanding review gates.
 
 ## Current boundaries
 
@@ -180,8 +241,9 @@ A paused copy can appear stable. A producer's temporary file followed by final r
 is preferable where available. Notifications currently use durable incidents and
 logs only. Large-image memory measurements, notification delivery, suspend-aware
 timeouts, disk-history retention, and sustained archive-scale event handling remain
-release gates. No GPU backend, AI models, model downloads, face enhancement,
-scratch reconstruction or Drive API exists yet.
+release gates. No GPU backend, face enhancement, super-resolution, scratch
+reconstruction or Drive API exists yet. Colorization remains disabled in the shared
+template until users explicitly complete setup and review representative results.
 
 ## Development checks
 

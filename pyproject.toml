@@ -11,6 +11,7 @@ dependencies = ["Pillow>=12.1.1,<14", "watchdog>=6,<7"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+colorization = ["torch>=2.6,<3", "numpy>=2,<3", "opencv-python-headless>=4.10,<5"]
 
 [project.scripts]
 revive = "revive.cli:main"
@@ -23,4 +24,16 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py311"
+extend-exclude = ["src/revive/_vendor"]
+
+[tool.setuptools.package-data]
+"revive._vendor.ddcolor" = ["LICENSE*", "NOTICE.md", "upstream.json"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", extra = "colorization" }]
 
