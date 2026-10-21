@@ -261,7 +261,7 @@ class Engine:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         containment = WorkerJob(request["settings"]["worker_commit_mib"])
         try:
-            with subprocess.Popen(
+            with containment.popen(
                 [sys.executable, "-m", "revive.worker"],
                 stdin=subprocess.PIPE,
                 text=True,
@@ -271,7 +271,6 @@ class Engine:
                 creationflags=flags,
             ) as process:
                 try:
-                    containment.assign(process.pid)
                     stdout, _ = process.communicate(
                         json.dumps(request), timeout=self.config.worker_timeout_seconds
                     )
@@ -282,6 +281,9 @@ class Engine:
                             True,
                         )
                 except BaseException:
+                    # Kill descendants before waiting for pipes inherited through
+                    # the Windows Python launcher; killing only Popen.pid can hang.
+                    containment.close()
                     process.kill()
                     process.communicate()
                     raise
@@ -340,6 +342,12 @@ class Engine:
                 )
                 if response["metadata"].get("colors_inferred"):
                     suffix = "colorized"
+                if response["metadata"].get("details_inferred"):
+                    suffix = (
+                        "colorized_upscaled"
+                        if response["metadata"].get("colors_inferred")
+                        else "upscaled"
+                    )
                 name = f"{stem}_{suffix}_{digest}_{self.config.fingerprint[:12]}_{mapping}{response['extension']}"
                 target = within(
                     self.config.output, self.config.output / relative.parent / name

@@ -18,7 +18,7 @@ from .state import State
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Revive local image normalization and automation (no AI models yet)."
+        description="Revive local photo processing with optional offline AI stages."
     )
     parser.add_argument("--config", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -29,6 +29,11 @@ def main(argv=None):
         help="Explicit model setup; normal processing never downloads weights.",
     )
     models.add_argument("action", choices=("status", "install"))
+    models.add_argument(
+        "--model",
+        choices=("ddcolor_tiny", "swinir_lightweight_x2"),
+        default="ddcolor_tiny",
+    )
     run = commands.add_parser("run")
     run.add_argument(
         "--once",
@@ -45,20 +50,22 @@ def main(argv=None):
         config = load_config(args.config)
         if args.command == "validate-config":
             print(
-                f"Configuration valid. Adapter: {config.adapter}; colorization enabled: {config.colorization_enabled}."
+                f"Configuration valid. Adapter: {config.adapter}; colorization enabled: {config.colorization_enabled}; super-resolution enabled: {config.sr_enabled}."
             )
             return 0
         if args.command == "models":
             from .models import install_model, model_status
 
             if args.action == "status":
-                print(json.dumps(model_status(config.app_data), indent=2))
+                print(json.dumps(model_status(config.app_data, args.model), indent=2))
             else:
                 config.app_data.mkdir(parents=True, exist_ok=True)
                 with InstanceLock(
                     within(config.app_data, config.app_data / "monitor.lock")
                 ):
-                    print(json.dumps(install_model(config.app_data), indent=2))
+                    print(
+                        json.dumps(install_model(config.app_data, args.model), indent=2)
+                    )
             return 0
         if args.command == "doctor":
             from importlib.metadata import version
@@ -68,6 +75,10 @@ def main(argv=None):
             from .models import model_status
 
             asset = model_status(config.app_data)
+            sr_asset = model_status(config.app_data, "swinir_lightweight_x2")
+            sr_dependencies = all(
+                find_spec(name) is not None for name in ("torch", "numpy")
+            )
             dependencies = all(
                 find_spec(name) is not None for name in ("torch", "numpy", "cv2")
             )
@@ -87,10 +98,16 @@ def main(argv=None):
                         "effective_worker_commit_mib": config.worker_settings()[
                             "worker_commit_mib"
                         ],
-                        "ai_available": bool(dependencies and asset["verified"]),
+                        "ai_available": bool(
+                            (dependencies and asset["verified"])
+                            or (sr_dependencies and sr_asset["verified"])
+                        ),
                         "colorization_enabled": config.colorization_enabled,
                         "colorization_dependencies_installed": dependencies,
                         "model_verified": asset["verified"],
+                        "super_resolution_enabled": config.sr_enabled,
+                        "super_resolution_dependencies_installed": sr_dependencies,
+                        "super_resolution_model_verified": sr_asset["verified"],
                     },
                     indent=2,
                 )
