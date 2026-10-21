@@ -17,7 +17,7 @@ from .state import State
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Revive automation MVP (mock copies only; no AI restoration)."
+        description="Revive local image normalization and automation (no AI models yet)."
     )
     parser.add_argument("--config", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -39,7 +39,7 @@ def main(argv=None):
         config = load_config(args.config)
         if args.command == "validate-config":
             print(
-                "Configuration valid. Adapter: mock_copy; no restoration is performed."
+                f"Configuration valid. Adapter: {config.adapter}; AI processing is unavailable."
             )
             return 0
         if args.command == "doctor":
@@ -56,6 +56,9 @@ def main(argv=None):
                         "littlecms": features.check("littlecms2"),
                         "input_exists": config.input.is_dir(),
                         "adapter": config.adapter,
+                        "effective_worker_memory_mib": config.worker_settings()[
+                            "worker_memory_mib"
+                        ],
                         "ai_available": False,
                     },
                     indent=2,

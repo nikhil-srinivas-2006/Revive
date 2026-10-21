@@ -10,4 +10,4 @@ build/
 dist/
 config.local.toml
 .runtime/
-
+test_photos/

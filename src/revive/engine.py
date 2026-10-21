@@ -259,7 +259,7 @@ class Engine:
             "settings": self.config.worker_settings(),
         }
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        containment = WorkerJob()
+        containment = WorkerJob(request["settings"]["worker_memory_mib"])
         try:
             with subprocess.Popen(
                 [sys.executable, "-m", "revive.worker"],
@@ -321,7 +321,12 @@ class Engine:
                 encoded = Path(directory) / "encoded"
                 digest = self._snapshot(job, snapshot)
                 response = self._worker(snapshot, encoded)
-                if file_hash(encoded) != response["hash"] or response["hash"] != digest:
+                if file_hash(encoded) != response["hash"]:
+                    raise ReviveError(
+                        "OUTPUT_INVALID",
+                        "Output checksum does not match the worker result.",
+                    )
+                if self.config.adapter == "mock_copy" and response["hash"] != digest:
                     raise ReviveError(
                         "OUTPUT_INVALID",
                         "Mock output is not identical to its snapshot.",
@@ -330,7 +335,10 @@ class Engine:
                 stem = relative.stem[:100]
                 # Include a path digest so case/extension collisions retain their source mapping.
                 mapping = hashlib.sha256(job["relative_path"].encode()).hexdigest()[:12]
-                name = f"{stem}_mockcopy_{digest}_{self.config.fingerprint[:12]}_{mapping}{response['extension']}"
+                suffix = (
+                    "mockcopy" if self.config.adapter == "mock_copy" else "normalized"
+                )
+                name = f"{stem}_{suffix}_{digest}_{self.config.fingerprint[:12]}_{mapping}{response['extension']}"
                 target = within(
                     self.config.output, self.config.output / relative.parent / name
                 )
