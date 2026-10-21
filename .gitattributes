@@ -1,0 +1,3 @@
+# Vendored source and licenses have exact byte hashes in upstream.json.
+src/revive/_vendor/ddcolor/*.py text eol=lf
+src/revive/_vendor/ddcolor/LICENSE* text eol=lf

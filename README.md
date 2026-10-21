@@ -228,6 +228,15 @@ normalization-only path. The author checkpoint has been installed for qualificat
 See [qualification evidence and limits](docs/COLORIZATION_QUALIFICATION.md) for
 source licenses, asset digests, measured memory, and outstanding review gates.
 
+## Experimental Microsoft restoration benchmark
+
+An opt-in CPU comparison harness is available in `scripts/benchmark_microsoft.py`.
+It uses `test_photos/`, writes private comparisons under
+`.runtime/microsoft_benchmark/`, and leaves the default pipeline unchanged.
+Quality repair completed 10 small previews; scratch detection/repair were deferred
+by the automatic RAM gate and remain unqualified. See
+[setup, measurements and limitations](docs/MICROSOFT_RESTORATION_BENCHMARK.md).
+
 ## Current boundaries
 
 Application path checks are **not OS-enforced isolation**. The normal user account
