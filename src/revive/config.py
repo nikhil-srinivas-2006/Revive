@@ -3,6 +3,7 @@ import json
 import os
 import tomllib
 from dataclasses import asdict, dataclass
+from importlib.metadata import version
 from pathlib import Path
 
 from .errors import ReviveError
@@ -21,11 +22,14 @@ class Config:
     sample_seconds: float = 5
     reconcile_seconds: float = 300
     adapter: str = "mock_copy"
+    denoise_strength: float = 0
+    contrast_strength: float = 0
     max_source_mib: int = 512
     max_input_megapixels: int = 40
     max_pending_jobs: int = 1000
     min_free_disk_mib: int = 512
     worker_timeout_seconds: float = 300
+    worker_memory_mib: int = 0
     max_attempts: int = 4
     delays_seconds: tuple[int, ...] = (60, 300, 1800)
 
@@ -45,10 +49,25 @@ class Config:
                     raise ReviveError(
                         "CONFIG_INVALID", "Configured directories must not overlap."
                     )
-        if self.adapter != "mock_copy":
+        if self.adapter not in ("mock_copy", "normalize_png"):
             raise ReviveError(
                 "BACKEND_UNSUPPORTED",
-                "Only mock_copy is implemented in this milestone.",
+                "Supported adapters are mock_copy and normalize_png.",
+            )
+        for name in ("denoise_strength", "contrast_strength"):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not 0 <= value <= 0.25:
+                raise ReviveError(
+                    "CONFIG_INVALID", f"{name} must be between 0 and 0.25."
+                )
+            if self.adapter == "mock_copy" and value:
+                raise ReviveError(
+                    "CONFIG_INVALID", "Cleanup settings require normalize_png."
+                )
+        if type(self.worker_memory_mib) is not int or self.worker_memory_mib < 0:
+            raise ReviveError(
+                "CONFIG_INVALID",
+                "worker_memory_mib must be a nonnegative integer (0 = auto).",
             )
         for name in ("recursive", "process_existing"):
             if type(getattr(self, name)) is not bool:
@@ -94,10 +113,26 @@ class Config:
     def fingerprint(self):
         # Include anything that can affect the emitted artifact, not scheduling.
         policy = {"adapter": self.adapter, "protocol": 1}
+        if self.adapter == "normalize_png":
+            policy.update(
+                protocol=1,
+                denoise_strength=self.denoise_strength,
+                contrast_strength=self.contrast_strength,
+                pillow_version=version("Pillow"),
+            )
         return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
     def worker_settings(self):
-        return {"max_input_megapixels": self.max_input_megapixels}
+        from .resources import worker_budget_mib
+
+        return {
+            "max_input_megapixels": self.max_input_megapixels,
+            "adapter": self.adapter,
+            "denoise_strength": self.denoise_strength,
+            "contrast_strength": self.contrast_strength,
+            "worker_memory_mib": worker_budget_mib(self.worker_memory_mib),
+            "min_free_disk_mib": self.min_free_disk_mib,
+        }
 
 
 def load_config(path: Path) -> Config:
@@ -114,13 +149,14 @@ def load_config(path: Path) -> Config:
                 "sample_seconds",
                 "reconcile_seconds",
             },
-            "pipeline": {"adapter"},
+            "pipeline": {"adapter", "denoise_strength", "contrast_strength"},
             "resources": {
                 "max_source_mib",
                 "max_input_megapixels",
                 "max_pending_jobs",
                 "min_free_disk_mib",
                 "worker_timeout_seconds",
+                "worker_memory_mib",
             },
             "retry": {"max_attempts", "delays_seconds"},
         }

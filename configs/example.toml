@@ -1,11 +1,12 @@
 # Copy to config.local.toml and choose three disjoint absolute paths.
-# This milestone implements automation only. No image restoration is performed.
+# Replace these environment references with absolute paths, or set the variables.
+# Normalize orientation and profiles into lossless PNG; no AI models are used.
 schema_version = 1
 
 [paths]
-input = "E:/Revive/.runtime/input"
-output = "E:/Revive/.runtime/output"
-app_data = "E:/Revive/.runtime/app"
+input = "${REVIVE_INPUT_DIR}"
+output = "${REVIVE_OUTPUT_DIR}"
+app_data = "${LOCALAPPDATA}/Revive"
 
 [watch]
 recursive = true
@@ -16,7 +17,10 @@ sample_seconds = 5
 reconcile_seconds = 300
 
 [pipeline]
-adapter = "mock_copy"
+adapter = "normalize_png"
+# Optional cleanup: 0 disables it. Values above 0.25 are rejected.
+denoise_strength = 0
+contrast_strength = 0
 
 [resources]
 max_source_mib = 512
@@ -24,6 +28,8 @@ max_input_megapixels = 40
 max_pending_jobs = 1000
 min_free_disk_mib = 512
 worker_timeout_seconds = 300
+# 0 = conservative automatic budget from total/available physical RAM.
+worker_memory_mib = 0
 
 [retry]
 max_attempts = 4

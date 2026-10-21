@@ -6,7 +6,7 @@ from .errors import ReviveError
 
 
 class WorkerJob:
-    def __init__(self):
+    def __init__(self, memory_mib=0):
         self.handle = None
         if os.name != "nt":
             return
@@ -62,6 +62,9 @@ class WorkerJob:
         self.handle = self.kernel.CreateJobObjectW(None, None)
         limits = ExtendedLimit()
         limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if memory_mib:
+            limits.basic.flags |= 0x100  # JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            limits.process_memory = memory_mib * 1024**2
         if not self.handle or not self.kernel.SetInformationJobObject(
             self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)
         ):
