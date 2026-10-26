@@ -25,6 +25,10 @@ def model_path(app_data, model_id=MODEL_ID):
 
 
 def model_info(model_id=MODEL_ID):
+    if model_id in ("ddcolor_modelscope", "realesrgan_x2plus"):
+        from .quality_models import DDCOLOR, REALESRGAN
+
+        return dict(DDCOLOR if model_id == "ddcolor_modelscope" else REALESRGAN)
     if model_id == "swinir_lightweight_x2":
         from .swinir_model import model_info as swinir_info
 

@@ -31,8 +31,13 @@ def main(argv=None):
     models.add_argument("action", choices=("status", "install"))
     models.add_argument(
         "--model",
-        choices=("ddcolor_tiny", "swinir_lightweight_x2"),
-        default="ddcolor_tiny",
+        choices=(
+            "ddcolor_tiny",
+            "ddcolor_modelscope",
+            "swinir_lightweight_x2",
+            "realesrgan_x2plus",
+        ),
+        default=None,
     )
     run = commands.add_parser("run")
     run.add_argument(
@@ -40,6 +45,17 @@ def main(argv=None):
         action="store_true",
         help="Settle/process current discoveries, then exit.",
     )
+    run.add_argument("--launch-token", help=argparse.SUPPRESS)
+    run.add_argument("--expected-config-identity", help=argparse.SUPPRESS)
+    for name in ("start", "stop", "restart"):
+        command = commands.add_parser(
+            name, help=f"{name.capitalize()} the local background monitor."
+        )
+        command.add_argument("--timeout", type=float, default=20)
+    startup = commands.add_parser(
+        "startup", help="Export a reviewable Windows login task; does not register it."
+    )
+    startup.add_argument("action", choices=("export",))
     commands.add_parser("status")
     commands.add_parser("export-manifest")
     retry = commands.add_parser("retry")
@@ -48,6 +64,33 @@ def main(argv=None):
     engine = None
     try:
         config = load_config(args.config)
+        if args.command == "run" and args.expected_config_identity:
+            from .runtime import identity
+
+            if identity(config) != args.expected_config_identity:
+                raise ReviveError(
+                    "CONFIG_CHANGED",
+                    "Configuration changed during launch; review it before starting again.",
+                )
+        if args.command in ("start", "stop", "restart"):
+            from .runtime import control
+
+            if not 0 < args.timeout <= 120:
+                raise ReviveError(
+                    "CONFIG_INVALID",
+                    "Control timeout must be between 0 and 120 seconds.",
+                )
+            print(
+                json.dumps(
+                    control(config, args.config, args.command, args.timeout), indent=2
+                )
+            )
+            return 0
+        if args.command == "startup":
+            from .startup import export_startup
+
+            print(json.dumps(export_startup(config, args.config), indent=2))
+            return 0
         if args.command == "validate-config":
             print(
                 f"Configuration valid. Adapter: {config.adapter}; colorization enabled: {config.colorization_enabled}; super-resolution enabled: {config.sr_enabled}."
@@ -56,15 +99,20 @@ def main(argv=None):
         if args.command == "models":
             from .models import install_model, model_status
 
+            selected_model = args.model or config.colorization_model
             if args.action == "status":
-                print(json.dumps(model_status(config.app_data, args.model), indent=2))
+                print(
+                    json.dumps(model_status(config.app_data, selected_model), indent=2)
+                )
             else:
                 config.app_data.mkdir(parents=True, exist_ok=True)
                 with InstanceLock(
                     within(config.app_data, config.app_data / "monitor.lock")
                 ):
                     print(
-                        json.dumps(install_model(config.app_data, args.model), indent=2)
+                        json.dumps(
+                            install_model(config.app_data, selected_model), indent=2
+                        )
                     )
             return 0
         if args.command == "doctor":
@@ -74,8 +122,8 @@ def main(argv=None):
 
             from .models import model_status
 
-            asset = model_status(config.app_data)
-            sr_asset = model_status(config.app_data, "swinir_lightweight_x2")
+            asset = model_status(config.app_data, config.colorization_model)
+            sr_asset = model_status(config.app_data, config.sr_model)
             sr_dependencies = all(
                 find_spec(name) is not None for name in ("torch", "numpy")
             )
@@ -103,9 +151,11 @@ def main(argv=None):
                             or (sr_dependencies and sr_asset["verified"])
                         ),
                         "colorization_enabled": config.colorization_enabled,
+                        "colorization_model": config.colorization_model,
                         "colorization_dependencies_installed": dependencies,
                         "model_verified": asset["verified"],
                         "super_resolution_enabled": config.sr_enabled,
+                        "super_resolution_model": config.sr_model,
                         "super_resolution_dependencies_installed": sr_dependencies,
                         "super_resolution_model_verified": sr_asset["verified"],
                     },
@@ -114,18 +164,52 @@ def main(argv=None):
             )
             return 0
         if args.command in ("status", "export-manifest"):
+            from .resources import memory_status
+            from .runtime import monitor_status
+
+            monitor = (
+                monitor_status(config.app_data) if args.command == "status" else None
+            )
+            resources = memory_status(config.worker_memory_mib)
+            effective = config.worker_settings()
+            resources.update(
+                {
+                    key: effective[key]
+                    for key in ("worker_memory_mib", "worker_commit_mib")
+                }
+            )
             database = within(config.app_data, config.app_data / "state.sqlite3")
             if not database.exists():
-                if args.command == "status":
-                    print(json.dumps({"counts": {}, "incidents": []}))
-                return 0
-            state = State.readonly(database)
-            try:
                 if args.command == "status":
                     print(
                         json.dumps(
                             {
+                                "counts": {},
+                                "incidents": [],
+                                "monitor": monitor,
+                                "resources": resources,
+                            }
+                        )
+                    )
+                return 0
+            state = State.readonly(database)
+            try:
+                if args.command == "status":
+                    from .errors import recovery_action
+
+                    attention = [
+                        {**dict(row), "action": recovery_action(row["error_code"])}
+                        for row in state.db.execute(
+                            "SELECT id,state,error_code,attempts,next_attempt FROM jobs WHERE state IN ('failed','retry_pending') ORDER BY id DESC LIMIT 20"
+                        )
+                    ]
+                    print(
+                        json.dumps(
+                            {
                                 "counts": state.counts(),
+                                "monitor": monitor,
+                                "resources": resources,
+                                "needs_attention": attention,
                                 "incidents": [
                                     dict(row)
                                     for row in state.db.execute(
@@ -176,7 +260,16 @@ def main(argv=None):
                 for sig in (signal.SIGINT, signal.SIGTERM):
                     signal.signal(sig, lambda *_: stop.set())
                 try:
-                    engine.run(once=args.once, stop=stop)
+                    from .runtime import RuntimeSession
+
+                    with RuntimeSession(
+                        config,
+                        args.config,
+                        stop,
+                        token=args.launch_token,
+                        once=args.once,
+                    ) as runtime:
+                        engine.run(once=args.once, stop=stop, on_ready=runtime.ready)
                 finally:
                     logger.removeHandler(handler)
                     handler.close()

@@ -60,6 +60,9 @@ def colorize_if_needed(image, inspection, settings, stages, notes):
     required = (
         896 if size == 256 else 1792
     ) + image.width * image.height * 24 // 1024**2
+    large = settings.get("colorization_model") == "ddcolor_modelscope"
+    if large:
+        required += 1152 if size == 256 else 1280
     if settings["worker_memory_mib"] < required:
         raise ReviveError(
             "RAM_ADMISSION",
@@ -69,6 +72,8 @@ def colorize_if_needed(image, inspection, settings, stages, notes):
     commit_required = (
         1792 if size == 256 else 3072
     ) + image.width * image.height * 24 // 1024**2
+    if large:
+        commit_required += 2304 if size == 256 else 2048
     if (
         settings.get("worker_commit_mib", settings["worker_memory_mib"])
         < commit_required
@@ -81,7 +86,7 @@ def colorize_if_needed(image, inspection, settings, stages, notes):
     adapter = DDColorAdapter(settings)
     result, details = adapter.colorize(image, strength)
     image.close()
-    stages.append("ddcolor_tiny_colorization")
+    stages.append(f"{settings.get('colorization_model', 'ddcolor_tiny')}_colorization")
     notes.append("COLORS_ARE_AI_INFERRED_NOT_HISTORICALLY_VERIFIED")
     return result, {
         "enabled": True,

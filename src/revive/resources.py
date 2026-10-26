@@ -73,6 +73,28 @@ def worker_commit_budget_mib(configured=0):
     return worker_budget_mib()
 
 
+def memory_status(configured=0):
+    total, available = memory_mib()
+    return {
+        "total_physical_mib": total,
+        "available_physical_mib": available,
+        "available_commit_mib": available_commit_mib(),
+        "worker_memory_mib": worker_budget_mib(configured),
+        "worker_commit_mib": worker_commit_budget_mib(configured),
+    }
+
+
+def quality_budget_mib(configured=0, *, commit=False):
+    """Larger-model opt-in: keep half of available memory and cap at 12 GiB."""
+    if configured:
+        return min(configured, 12288)
+    total, physical = memory_mib()
+    available = available_commit_mib() if commit else physical
+    if not total or not available:
+        return 512
+    return max(1, min(12288, total // 2, available // 2))
+
+
 def process_memory_mib():
     """Windows process high-water measurements for explicit qualification only."""
     if os.name != "nt":

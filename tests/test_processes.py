@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -13,6 +14,8 @@ def test_timeout_closes_job_before_draining_inherited_pipes(
     engine, monkeypatch, tmp_path
 ):
     import revive.engine
+
+    engine.config = replace(engine.config, worker_timeout_seconds=0.01)
 
     events = []
 

@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Revive · Photo review</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101419; color: #edf2f7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, select, input { font: inherit; }
+    button, select, .link { color: inherit; background: #202831; border: 1px solid #3c4855; border-radius: 7px; padding: 8px 12px; }
+    button, select { cursor: pointer; }
+    button:hover, .link:hover { background: #2e3945; }
+    button:disabled { opacity: .35; cursor: default; }
+    :focus-visible { outline: 2px solid #86dcce; outline-offset: 3px; }
+    header, main, footer { max-width: 1400px; margin: auto; padding: 20px 28px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    h1 { font-size: 23px; letter-spacing: -.5px; margin: 0 0 4px; }
+    p { margin: 0; color: #a7b3c0; font-size: 14px; }
+    main { padding-top: 0; }
+    .toolbar, .navigation, .group { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .toolbar { justify-content: space-between; margin-bottom: 14px; }
+    label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #b9c4cf; }
+    #photo { max-width: min(500px, 70vw); }
+    #counter { color: #a7b3c0; font-variant-numeric: tabular-nums; font-size: 14px; }
+    .viewer { border: 1px solid #303b46; border-radius: 10px; overflow: hidden; background: #080b0f; }
+    #viewport { height: min(66vh, 740px); min-height: 300px; overflow: auto; display: grid; }
+    #canvas { position: relative; margin: auto; flex-shrink: 0; user-select: none; }
+    .photo-image { position: absolute; width: 100%; height: 100%; object-fit: contain; inset: 0; pointer-events: none; user-select: none; }
+    #before-layer { position: absolute; inset: 0; clip-path: inset(0 50% 0 0); }
+    #divider { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: white; pointer-events: none; box-shadow: 0 0 3px #000; }
+    #divider::after { content: '↔'; display: grid; place-items: center; position: absolute; top: 50%; left: -19px; width: 40px; height: 40px; border-radius: 50%; color: #17212a; background: white; box-shadow: 0 2px 12px #0008; }
+    .tag { position: absolute; top: 12px; padding: 5px 9px; background: #101419c9; border: 1px solid #ffffff35; border-radius: 5px; font-size: 12px; pointer-events: none; }
+    #before-tag { left: 12px; } #after-tag { right: 12px; }
+    #message { padding: 30px; text-align: center; color: #c4cfd9; }
+    .scrubber { display: flex; align-items: center; gap: 14px; padding: 13px 18px; border-top: 1px solid #303b46; font-size: 13px; color: #b9c4cf; }
+    #split { flex: 1; min-width: 60px; accent-color: #86dcce; }
+    .below { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0 20px; }
+    #summary { color: #b9c4cf; font-size: 14px; }
+    .link { display: inline-block; font-size: 13px; text-decoration: none; }
+    .link[aria-disabled="true"] { opacity: .4; pointer-events: none; }
+    #thumbs { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 12px; }
+    .thumb { padding: 4px; flex: 0 0 92px; position: relative; }
+    .thumb img { width: 80px; height: 75px; object-fit: cover; display: block; border-radius: 3px; }
+    .thumb span { display: block; font-size: 11px; padding-top: 5px; color: #a7b3c0; }
+    .thumb[aria-pressed="true"] { border-color: #86dcce; box-shadow: 0 0 0 1px #86dcce; }
+    details { margin-top: 14px; color: #a7b3c0; font-size: 13px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    footer { padding-top: 0; font-size: 12px; color: #8996a4; }
+    [hidden] { display: none !important; }
+    #canvas.side { display: flex; gap: 16px; }
+    #canvas.side .photo-image { position: static; height: 100%; width: calc(50% - 8px); }
+    #canvas.side #before-layer { position: static; width: calc(50% - 8px); height: 100%; clip-path: none !important; flex-shrink: 0; order: -1; }
+    #canvas.side #before-layer img { width: 100%; }
+    @media(max-width: 700px) { header, main, footer { padding-left: 14px; padding-right: 14px; } .toolbar { align-items: start; } #viewport { height: 56vh; } #photo { max-width: 60vw; } }
+  </style>
+</head>
+<body>
+  <header><div><h1>Photo review</h1><p id="description">Before and after · Everything stays on this PC</p></div><button id="reload" type="button">Reload page</button></header>
+  <main>
+    <div class="toolbar">
+      <div class="navigation"><button id="prev" type="button" aria-label="Previous photo">←</button><select id="photo" aria-label="Choose photo"></select><button id="next" type="button" aria-label="Next photo">→</button><span id="counter"></span></div>
+      <div class="group"><label>After<select id="result"><option value="after_url">New result</option><option value="previous_url">Previous pipeline</option></select></label><label>View<select id="mode"><option value="slider">Slider</option><option value="side">Side by side</option></select></label><label>Zoom<select id="zoom"><option value="1">Fit</option><option value="2">2×</option><option value="3">3×</option></select></label></div>
+    </div>
+    <div class="viewer">
+      <div id="viewport">
+        <div id="canvas" hidden>
+          <img id="after" class="photo-image" alt="Processed photo" draggable="false">
+          <div id="before-layer"><img id="before" class="photo-image" alt="Original photo" draggable="false"></div>
+          <div id="divider"></div><span id="before-tag" class="tag">Before</span><span id="after-tag" class="tag">After</span>
+        </div>
+        <div id="message" role="status">Loading photos…</div>
+      </div>
+      <div class="scrubber" id="scrubber"><span>Before</span><input id="split" type="range" min="0" max="100" value="50" aria-label="Before and after split"><span>After</span></div>
+    </div>
+    <div class="below"><span id="summary" aria-live="polite"></span><div class="group"><a class="link" id="original-link" target="_blank" rel="noopener">Open original ↗</a><a class="link" id="result-link" target="_blank" rel="noopener">Open result ↗</a></div></div>
+    <div id="thumbs" aria-label="Photo thumbnails"></div>
+    <details><summary>Processing details</summary><pre id="details"></pre></details>
+  </main>
+  <footer>Drag the divider to compare. Use ← / → for photos; scroll to inspect when zoomed. This page is a snapshot of the latest generated review.</footer>
+  <script id="photo-data" type="application/json">__PHOTO_DATA__</script>
+  <script>
+    'use strict';
+    const photos = JSON.parse(document.getElementById('photo-data').textContent);
+    const $ = id => document.getElementById(id);
+    const before = $('before'), after = $('after'), canvas = $('canvas'), viewport = $('viewport');
+    let selected = 0, loadToken = 0, ready = false, dragging = null;
+    function split() {
+      const value = $('split').value;
+      $('before-layer').style.clipPath = `inset(0 ${100-value}% 0 0)`;
+      $('divider').style.left = `${value}%`;
+    }
+    function layout() {
+      if (!ready) return;
+      const side = $('mode').value === 'side';
+      const w = after.naturalWidth, h = after.naturalHeight;
+      const fit = Math.min((viewport.clientWidth-32-(side?16:0))/(w*(side?2:1)), (viewport.clientHeight-32)/h);
+      const scale = fit * Number($('zoom').value);
+      canvas.style.width = `${w*scale*(side?2:1)+(side?16:0)}px`;
+      canvas.style.height = `${h*scale}px`;
+      canvas.classList.toggle('side', side);
+      $('divider').hidden = side;
+      $('scrubber').hidden = side;
+      canvas.style.touchAction = side ? 'auto' : 'none';
+      split();
+    }
+    function link(id, url) {
+      $(id).setAttribute('aria-disabled', String(!url));
+      if (url) $(id).href = url;
+      else $(id).removeAttribute('href');
+    }
+    async function show(index) {
+      if (!photos.length) {
+        $('message').textContent = 'No photos yet. Generate the review after processing some photos.';
+        ['prev','next','photo','result','mode','zoom','split'].forEach(id => $(id).disabled = true);
+        return;
+      }
+      selected = Math.max(0, Math.min(index, photos.length-1));
+      const item = photos[selected], token = ++loadToken, url = item[$('result').value];
+      ready = false; canvas.hidden = true; $('message').hidden = false;
+      $('photo').value = String(selected); $('counter').textContent = `${selected+1} / ${photos.length}`;
+      $('prev').disabled = selected === 0; $('next').disabled = selected === photos.length-1;
+      [...$('thumbs').children].forEach((button, i) => button.setAttribute('aria-pressed', String(i===selected)));
+      const thumb = $('thumbs').children[selected];
+      if (thumb) {
+        const strip = $('thumbs');
+        strip.scrollLeft += thumb.getBoundingClientRect().left - strip.getBoundingClientRect().left - (strip.clientWidth-thumb.offsetWidth)/2;
+      }
+      const previous = $('result').value === 'previous_url';
+      $('after-tag').textContent = previous ? 'Previous' : 'After';
+      $('summary').textContent = previous ? 'Comparing with the previous pipeline' :
+        [item.colorized ? 'Colorized' : 'Original colors retained', item.upscaled ? 'Upscaled' : null,
+         item.worker_measurements?.seconds != null ? `${Math.round(item.worker_measurements.seconds)} seconds` : null].filter(Boolean).join(' · ');
+      $('details').textContent = JSON.stringify({photo:item.name, status:item.state, error:item.error_code, stages:item.stages, measurements:item.worker_measurements}, null, 2);
+      link('original-link',item.before_url); link('result-link',url);
+      $('split').disabled = !url;
+      $('message').textContent = !url ? (previous ? 'No previous result is available for this photo.' : `No processed result yet. Status: ${item.state}${item.error_code ? ' · '+item.error_code : ''}`) : 'Loading photos…';
+      viewport.scrollTop = viewport.scrollLeft = 0;
+      if (!url) return;
+      try {
+        // Separate loaders prevent a late image from a previous selection from
+        // replacing the active comparison during fast keyboard navigation.
+        const a = new Image(), b = new Image();
+        a.src = item.before_url; b.src = url;
+        await Promise.all([a.decode(), b.decode()]);
+        if (token !== loadToken) return;
+        before.src = a.src; after.src = b.src;
+        await Promise.all([before.decode(), after.decode()]);
+        if (token !== loadToken) return;
+        ready = true; $('message').hidden = true; canvas.hidden = false; layout();
+      } catch (error) {
+        if (token !== loadToken) return;
+        $('message').textContent = 'Could not load a photo. Open this HTML file directly in your browser and check that the original and result still exist.';
+      }
+    }
+    photos.forEach((item, i) => {
+      const option = document.createElement('option'); option.value = String(i); option.textContent = item.name; $('photo').append(option);
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'thumb'; button.title = item.name; button.setAttribute('aria-label',`Show ${item.name}`);
+      const image = document.createElement('img'); image.src = item.after_url || item.before_url; image.alt = ''; image.loading = 'lazy';
+      const label = document.createElement('span'); label.textContent = `Photo ${i+1}`;
+      button.append(image,label); button.addEventListener('click',() => show(i)); $('thumbs').append(button);
+    });
+    $('prev').onclick = () => show(selected-1); $('next').onclick = () => show(selected+1);
+    $('photo').onchange = () => show(Number($('photo').value)); $('result').onchange = () => show(selected);
+    $('mode').onchange = layout; $('zoom').onchange = layout; $('split').oninput = split;
+    $('reload').onclick = () => location.reload();
+    const drag = event => {
+      const rect = canvas.getBoundingClientRect();
+      $('split').value = String(Math.max(0,Math.min(100,(event.clientX-rect.left)/rect.width*100))); split();
+    };
+    canvas.addEventListener('pointerdown',event => {
+      if ($('mode').value !== 'slider' || event.button !== 0) return;
+      event.preventDefault(); dragging = event.pointerId;
+      canvas.setPointerCapture(event.pointerId); drag(event);
+    });
+    window.addEventListener('pointermove',event => { if (dragging === event.pointerId) drag(event); });
+    window.addEventListener('pointerup',event => {
+      if (dragging !== event.pointerId) return;
+      drag(event); dragging = null;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    });
+    window.addEventListener('pointercancel',() => { dragging = null; });
+    window.addEventListener('blur',() => { dragging = null; });
+    window.addEventListener('resize',layout);
+    document.addEventListener('keydown',event => {
+      if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName)) return;
+      if (event.key === 'ArrowRight') { event.preventDefault(); show(selected+1); }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); show(selected-1); }
+    });
+    show(0);
+  </script>
+</body>
+</html>

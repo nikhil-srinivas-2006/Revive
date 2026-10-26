@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/XPixelGroup/BasicSR",
+  "revision": "8d56e3a045f9fb3e1d8872f92ee4a4f07f886b0a",
+  "files": {
+    "rrdbnet_arch.py": {
+      "source_path": "basicsr/archs/rrdbnet_arch.py",
+      "upstream_sha256": "6aa8eb3f77e918b90eeff4ebfaf8745abe0c40eb8fcc03abbc1928693d70ab58",
+      "packaged_sha256": "69c8aad0d2caad5db57296a34dea4e311e6b1a76bc9e23137ebf2a98fe790ad7"
+    },
+    "compat.py": {
+      "source_path": "basicsr/archs/arch_util.py",
+      "upstream_sha256": "be2cec6482fba5455cc1f03ff40da84a89e27feadf886018a4fa7b97b8a1bb55",
+      "packaged_sha256": "abcd83b6d12e3563fbbccce3792db1004212afbe1aab711077acaabc7bcb18bb"
+    },
+    "LICENSE": {
+      "source_path": "LICENSE.txt",
+      "upstream_sha256": "5447872f21ddc29dc0dc060d5c885513c01c904e9da9931bba69898a6fb4d415",
+      "packaged_sha256": "5447872f21ddc29dc0dc060d5c885513c01c904e9da9931bba69898a6fb4d415"
+    },
+    "LICENSE-Real-ESRGAN": {
+      "source_path": "LICENSE",
+      "repository": "https://github.com/xinntao/Real-ESRGAN",
+      "revision": "a4abfb2979a7bbff3f69f58f58ae324608821e27",
+      "upstream_sha256": "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+      "packaged_sha256": "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2"
+    }
+  }
+}

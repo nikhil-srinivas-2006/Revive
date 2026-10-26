@@ -1,12 +1,74 @@
 # Implementation status
 
-Updated: 2026-10-21
+Updated: 2026-10-26
 
 The user authorized starting implementation after the plan was saved. This document
 records progress; the [design plan](IMPLEMENTATION_PLAN.md) remains the target
 architecture rather than a claim that all features are already available.
 
-## Current milestone: optional 2x super-resolution
+## Current milestone: larger free local models
+
+Implemented explicit selection of DDColor-L ModelScope and Real-ESRGAN x2plus,
+with pinned checkpoints, verified offline loads, strict architecture matching,
+packaged source/licenses, CPU inference, and model-specific provenance and
+fingerprints. Tiny/SwinIR configuration defaults and processing remain supported.
+The new template selects DDColor-L at 512 pixels and tiled Real-ESRGAN native 2x.
+The everyday development profile uses separate quality output/state and a 6 GiB
+worker ceiling, within the user's 12 GiB limit. Old profiles/results are preserved.
+
+Three production-contained real-photo probes completed with unchanged originals;
+the combined 512-view colorization/upscale probe took 16.574 worker seconds,
+1958.95 MiB peak working set and 3210.32 MiB peak commit. Two SR-only probes
+also completed; the color/uncertain gates intentionally bypassed colorization.
+Repeated SR-only trial PNG bytes matched. Wider visual quality and hardware
+qualification remain necessary; these measurements are not a quality guarantee.
+See [local quality implementation and evidence](LOCAL_QUALITY.md).
+
+Full regression suite: **188 passed, 1 skipped** (Windows symlink privilege),
+including 19 new model/configuration/geometry/routing/admission/CLI tests.
+Ruff lint/format checks pass. The wheel build includes the new architectures,
+license notices and manifests and excludes weights, private photos and configs.
+There are no new dependencies or cloud inference calls. Full-folder development
+qualification completed all **12 photos**: seven colorized and all twelve upscaled.
+All twelve original hashes match the pre-run record and every published PNG was
+reopened and checked against its recorded hash, dimensions and orientation.
+Worker times ranged from 8.057 to 376.025 seconds, with maximum working set
+2230.15 MiB and maximum commit 3324.99 MiB. The former SwinIR-timeout portrait
+completed under the new profile's explicitly longer CPU deadline.
+
+Evidence: `.runtime/quality_state/qualification_summary.json`; the full
+original/previous/new comparison is `.runtime/quality_state/review/index.html`.
+The new continuous monitor was started after the successful batch and is watching
+`test_photos/` through native events. No login task was registered. It uses the
+new models and 6144 MiB ceiling in both everyday profile aliases. Visual quality,
+identity/color fidelity and representative laptop performance still need review.
+
+## Previous milestone: background monitor controls
+
+Implemented windowless `start`, token-scoped `stop`, `restart`, runtime status and
+actionable failure guidance. Stop interrupts active worker/snapshot work and
+preserves retryability without using an attempt. Startup settings are verified
+before processing; stale runtime JSON/PIDs cannot control a new instance. Native
+watches reattach after directory replacement, and long loop gaps reconcile
+immediately. Interrupted first scans retain the skip-existing policy. Losing
+control/heartbeat storage fails closed.
+
+The separate `.runtime/background.toml` live smoke test watched `test_photos/`,
+skipped the ten existing photos, remained responsive with native events active
+across CLI invocations, and stopped cleanly. Its current-user, least-privilege
+login-task definition was exported and parsed successfully by Windows Task
+Scheduler. No task or notification identity was registered. See
+[background operation](BACKGROUND_OPERATION.md) for commands and exact boundaries.
+
+The complete suite passes **158 tests, with 1 skipped**. Sixteen new lifecycle
+tests cover real background arrivals/restarts, interrupted workers and initial
+scans, stale control tokens/state, configuration changes during launch, watcher
+replacement, simulated resume, readiness/control failures, status guidance and
+startup XML. Ruff checks pass and the wheel builds successfully. The live test
+monitor is stopped. Actual login registration, native failure toasts, manual
+power-cycle tests and the seven-day soak remain release work.
+
+## Previous milestone: optional 2x super-resolution
 
 Implemented the offline CPU SwinIR lightweight x2 adapter, explicit model setup,
 strict configuration, bounded tiles, at-most-2x output geometry toward 4096 pixels,
@@ -86,7 +148,7 @@ Deliberate initial differences from the target plan:
   computed separately. The estimates still need a representative laptop matrix.
 - Pending jobs are bounded, but history retention and watchdog's internal event
   backlog still need production qualification.
-- Native toasts, service/autostart management, stop/reprocess CLI commands,
+- Native toasts, deployed login startup, completed-job reprocessing,
   face adapters, calibrated visual-quality gates and broader
   performance benchmarks remain unimplemented.
 
@@ -154,13 +216,64 @@ machine's drive paths. Private test photographs are excluded from Git.
 DDColor Tiny licensing, dependencies, CPU inference and checkpoint integrity have
 been qualified for the pinned 256-view CPU path. Optional SwinIR x2 is implemented,
 with partial real-photo qualification under the resource/deadline gates. Continue
-native failure alerts and operator controls while extending the colorization/SR
+native failure alerts and explicit login deployment while extending the colorization/SR
 review corpus and laptop benchmarks. Microsoft scratch-model qualification and a
 Real-ESRGAN runtime comparison remain separate experiments. Automatic color
 classification and inferred-detail quality still need broader calibration before
 unattended production use.
 
 The separate `.runtime/colorization.toml` uses `.runtime/colorized_output/` and
-`.runtime/colorization_state/`. The usual `config.local.toml` remains normalization
-only. Explicit model setup was authorized and completed for this qualification;
+`.runtime/colorization_state/`. That qualification profile is retained separately.
+Explicit model setup was authorized and completed for this qualification;
 no runtime weight download, GPU backend or autostart registration was introduced.
+
+## Automatic everyday profile (2026-10-21)
+
+The local `config.local.toml` and `.runtime/background.toml` now share the same
+automatic settings, output and durable state. Both colorization and super-resolution
+are enabled; the existing conservative per-photo gates select each independently.
+The checked-in setup template also enables both stages and the README includes
+one-time installation of both optional dependency sets and pinned checkpoints.
+
+Input remains `test_photos/`; output is `.runtime/automatic_output/`, state is
+`.runtime/automatic_state/`. Existing photos are included on the first run of this
+new state. Earlier normalization/colorization/SR qualification outputs and state
+are preserved. Both already downloaded checkpoints were copied into the automatic
+state and verified against the pinned SHA-256 hashes without network access.
+No monitor was started and no login task was registered by this change.
+
+The resolution gate uses long-edge dimensions (4096 target, at most 2x), not a
+learned assessment of blur. Sepia/uncertain and transparent inputs retain their
+conservative bypass rules; RAM/deadline failures still surface for retry. There is
+no new low-memory fallback or claim that the earlier SR qualification failures
+have been resolved.
+
+Validation: 64 routing/colorization/super-resolution tests passed, including six
+new combinations exercising real eligibility/geometry gates with inference doubles.
+They verify both/either/neither stage selection, stage order, provenance, dimensions,
+and unchanged source hashes. These tests do not constitute combined real-model
+performance qualification. Ruff passed for the new tests.
+
+## Low-memory queue recovery (2026-10-22)
+
+The automatic profile had 11 RAM_ADMISSION jobs pending with two attempts each.
+The monitor was stopped. Read-only inspection showed approximately 0.6--0.8 GiB
+available physical RAM and 1.4--1.7 GiB available system commit; automatic worker
+budgets were below both enabled models' admission estimates. No caps were raised,
+stages disabled, queued records reset, or original photos modified.
+
+RAM_ADMISSION now defers without consuming another attempt, including at the
+normal retry limit. It preserves earlier attempt counts, waits at least 60 seconds
+between checks, and remains subject to the monitor running. Real crashes/timeouts
+retain bounded retries. Status now includes available physical RAM/system commit
+and both effective worker budgets. Resource readings describe the current system,
+not the memory observed by past attempts.
+
+Regression testing also reproduced Windows replacement failure while a reader held
+the monitor JSON open. Atomic control-file replacement now retries Windows sharing
+or access-denied errors for at most 100 ms; persistent storage failure still stops
+processing. Tests cover transient/persistent conflicts, repeated admission refusal,
+preserved attempt counts, cleanup, and eventual success after admission is possible.
+Full suite: 169 passed, one skipped; Ruff lint and formatting passed. The live
+automatic monitor remains stopped; no claim of successful low-memory AI inference
+or broader laptop qualification is made by these scheduler fixes.

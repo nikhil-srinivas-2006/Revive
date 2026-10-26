@@ -5,12 +5,12 @@ from pathlib import Path
 
 from .errors import ReviveError
 from .models import verified_checkpoint
-from .swinir_model import MODEL_ID, SOURCE_REVISION, WEIGHT_SHA256
+from .swinir_model import MODEL_ID
 
 HALO = 32
 
 
-def tiled_upscale(image, predict, tile_size=64):
+def tiled_upscale(image, predict, tile_size=64, *, alignment=8, pre_pad=0):
     """Never create a full-image float tensor or a full-image weight accumulator.
 
     Every tile origin aligns to the global 8-pixel attention window grid. Context
@@ -21,8 +21,13 @@ def tiled_upscale(image, predict, tile_size=64):
 
     width, height = image.size
     array = np.asarray(image)
+    if pre_pad:
+        array = np.pad(array, ((0, pre_pad), (0, pre_pad), (0, 0)), mode="reflect")
+    padded_height, padded_width = array.shape[:2]
     array = np.pad(
-        array, ((0, (-height) % 8), (0, (-width) % 8), (0, 0)), mode="symmetric"
+        array,
+        ((0, (-padded_height) % alignment), (0, (-padded_width) % alignment), (0, 0)),
+        mode="symmetric",
     )
     padded = Image.fromarray(array)
     del array
@@ -70,6 +75,10 @@ def tiled_upscale(image, predict, tile_size=64):
 
 
 class SwinIRAdapter:
+    model_id = MODEL_ID
+    alignment = 8
+    pre_pad = 0
+
     def __init__(self, settings):
         self.settings = settings
 
@@ -140,6 +149,8 @@ class SwinIRAdapter:
                 image,
                 partial(self.predict, model),
                 self.settings.get("sr_tile_size", 64),
+                alignment=self.alignment,
+                pre_pad=self.pre_pad,
             )
         except RuntimeError as exc:
             self.failure(exc, "OUTPUT_INVALID")
@@ -164,15 +175,19 @@ class SwinIRAdapter:
             resized = result.resize(target, Image.Resampling.LANCZOS)
             result.close()
             result = resized
+        from .models import model_info
+
+        asset = model_info(self.model_id)
         return result, {
-            "model": MODEL_ID,
-            "source_revision": SOURCE_REVISION,
-            "weight_sha256": WEIGHT_SHA256,
+            "model": self.model_id,
+            "source_revision": asset["source_revision"],
+            "weight_sha256": asset["sha256"],
             "native_scale": 2,
             "input_size": list(image.size),
             "output_size": list(target),
             "tile_size": self.settings.get("sr_tile_size", 64),
             "context_pixels": HALO,
+            **({"pre_pad": self.pre_pad} if self.pre_pad else {}),
             "tiles": count,
             "tiling_is_approximate": True,
             "neutral_channels_preserved": neutral,
