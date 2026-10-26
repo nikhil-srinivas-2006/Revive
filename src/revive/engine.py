@@ -41,6 +41,7 @@ class Engine:
     def __init__(self, config: Config):
         config.validate()
         self.config = config
+        self.stop_event = threading.Event()
         for path in (config.app_data, config.output):
             check_plain_path(path)
             path.mkdir(parents=True, exist_ok=True)
@@ -123,6 +124,8 @@ class Engine:
             self.state.update(row["id"], staging_path=None)
 
     def scan(self, baseline=None, now=None):
+        if self.stop_event.is_set():
+            return
         now = time.time() if now is None else now
         if baseline is None:
             baseline = not self.config.process_existing and not self.state.setting(
@@ -135,6 +138,8 @@ class Engine:
                     "INPUT_UNAVAILABLE", "Input directory is unavailable.", True
                 )
             self._walk(self.config.input, baseline, now)
+            if self.stop_event.is_set():
+                return
             self.state.set_setting("initial_scan_done", "yes")
             # Missing arrivals must not occupy bounded readiness slots forever.
             waiting = self.state.db.execute(
@@ -159,6 +164,8 @@ class Engine:
     def _walk(self, directory, baseline, now):
         with os.scandir(directory) as entries:
             for entry in entries:
+                if self.stop_event.is_set():
+                    return
                 path = Path(entry.path)
                 try:
                     within(self.config.input, path)
@@ -221,6 +228,12 @@ class Engine:
             size = 0
             with dest.open("xb") as output:
                 while block := stream.read(1024 * 1024):
+                    if self.stop_event.is_set():
+                        raise ReviveError(
+                            "WORKER_STOPPED",
+                            "Snapshot interrupted by stop request.",
+                            True,
+                        )
                     size += len(block)
                     if size > limit:
                         raise ReviveError(
@@ -237,7 +250,12 @@ class Engine:
                 )
             if os.name != "nt":
                 # POSIX has no mandatory deny-write sharing: verify a second full read.
-                time.sleep(self.config.quiet_seconds)
+                if self.stop_event.wait(self.config.quiet_seconds):
+                    raise ReviveError(
+                        "WORKER_STOPPED",
+                        "Snapshot verification interrupted by stop request.",
+                        True,
+                    )
                 stream.seek(0)
                 if (
                     hashlib.file_digest(stream, "sha256").hexdigest()
@@ -253,6 +271,10 @@ class Engine:
         return digest.hexdigest()
 
     def _worker(self, snapshot, output):
+        if self.stop_event.is_set():
+            raise ReviveError(
+                "WORKER_STOPPED", "Processing interrupted by stop request.", True
+            )
         request = {
             "snapshot": str(snapshot),
             "output": str(output),
@@ -271,9 +293,29 @@ class Engine:
                 creationflags=flags,
             ) as process:
                 try:
-                    stdout, _ = process.communicate(
-                        json.dumps(request), timeout=self.config.worker_timeout_seconds
-                    )
+                    deadline = time.monotonic() + self.config.worker_timeout_seconds
+                    payload = json.dumps(request)
+                    while True:
+                        if self.stop_event.is_set():
+                            raise ReviveError(
+                                "WORKER_STOPPED",
+                                "Processing interrupted by stop request.",
+                                True,
+                            )
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(
+                                process.args, self.config.worker_timeout_seconds
+                            )
+                        try:
+                            stdout, _ = process.communicate(
+                                payload, timeout=min(0.25, remaining)
+                            )
+                            break
+                        except subprocess.TimeoutExpired:
+                            if remaining <= 0.25:
+                                raise
+                        payload = None
                     if process.returncode:
                         raise ReviveError(
                             "WORKER_CRASH",
@@ -297,7 +339,7 @@ class Engine:
             return response
         except subprocess.TimeoutExpired as exc:
             raise ReviveError(
-                "WORKER_TIMEOUT", "Worker exceeded its deadline; work will retry.", True
+                "WORKER_TIMEOUT", "Worker exceeded its deadline.", True
             ) from exc
         except (ValueError, KeyError) as exc:
             raise ReviveError(
@@ -323,6 +365,12 @@ class Engine:
                 encoded = Path(directory) / "encoded"
                 digest = self._snapshot(job, snapshot)
                 response = self._worker(snapshot, encoded)
+                if self.stop_event.is_set():
+                    raise ReviveError(
+                        "WORKER_STOPPED",
+                        "Processing interrupted by stop request.",
+                        True,
+                    )
                 if file_hash(encoded) != response["hash"]:
                     raise ReviveError(
                         "OUTPUT_INVALID",
@@ -427,6 +475,27 @@ class Engine:
         return True
 
     def _fail(self, job, attempts, exc):
+        if exc.code == "RAM_ADMISSION":
+            # Admission refused the work; this is not a failed inference attempt.
+            # Preserve earlier real failures, but keep waiting even at the normal
+            # retry limit. Back off to avoid constantly snapshotting/launching.
+            self.state.update(
+                job["id"],
+                state="retry_pending",
+                attempts=job["attempts"],
+                next_attempt=time.time() + max(60, self.config.delays_seconds[0]),
+                error_code=exc.code,
+            )
+            return
+        if exc.code == "WORKER_STOPPED":
+            self.state.update(
+                job["id"],
+                state="retry_pending",
+                attempts=max(0, attempts - 1),
+                next_attempt=0,
+                error_code="INTERRUPTED",
+            )
+            return
         retry = exc.retryable and attempts < self.config.max_attempts
         delay = self.config.delays_seconds[
             min(attempts - 1, len(self.config.delays_seconds) - 1)
@@ -443,12 +512,27 @@ class Engine:
         if not retry and state != "skipped":
             self.incident(exc.code, f"Job {job['id']}: {exc}. Run status for details.")
 
-    def run(self, once=False, stop=None):
+    def run(self, once=False, stop=None, on_ready=None):
         stop = stop or threading.Event()
+        self.stop_event = stop
+        if stop.is_set():
+            return
         self.recover()
         self.scan()
         dirty = threading.Event()
         observer = None
+        watched_identity = None
+
+        def root_identity():
+            try:
+                check_plain_path(self.config.input)
+                info = self.config.input.stat()
+                return (
+                    (info.st_dev, info.st_ino) if self.config.input.is_dir() else None
+                )
+            except (OSError, ReviveError):
+                return None
+
         if not once:
             from watchdog.events import FileSystemEventHandler
             from watchdog.observers import Observer
@@ -458,24 +542,59 @@ class Engine:
                     if event.event_type in {"created", "modified", "moved", "deleted"}:
                         dirty.set()
 
-            try:
-                observer = Observer()
-                observer.schedule(
-                    Handler(), str(self.config.input), recursive=self.config.recursive
-                )
-                observer.start()
-            except OSError:
-                observer = None
-                self.incident(
-                    "WATCH_UNAVAILABLE",
-                    "Event monitoring unavailable; reconciliation remains active.",
-                )
+            def attach_observer():
+                candidate = Observer()
+                try:
+                    check_plain_path(self.config.input)
+                    candidate.schedule(
+                        Handler(),
+                        str(self.config.input),
+                        recursive=self.config.recursive,
+                    )
+                    candidate.start()
+                    return candidate
+                except (OSError, ReviveError):
+                    candidate.stop()
+                    if candidate.is_alive():
+                        candidate.join(timeout=10)
+                    self.incident(
+                        "WATCH_UNAVAILABLE",
+                        "Event monitoring unavailable; reconciliation remains active.",
+                    )
+                    return None
+
+            observer = attach_observer()
+            watched_identity = root_identity()
         next_scan = time.monotonic() + self.config.sample_seconds
+        last_loop = time.monotonic()
         try:
+            if on_ready is not None:
+                on_ready(observer is not None)
             while not stop.is_set():
                 now = time.monotonic()
+                # Reconcile immediately after a long scheduling/suspend gap,
+                # even if the regular reconciliation deadline has not arrived.
+                resumed = now - last_loop > 5
+                if resumed:
+                    dirty.set()
+                last_loop = now
                 if now >= next_scan or dirty.is_set():
                     dirty.clear()
+                    if not once:
+                        current_identity = root_identity()
+                        if observer is not None and (
+                            resumed or current_identity != watched_identity
+                        ):
+                            observer.stop()
+                            observer.join(timeout=10)
+                            observer = None
+                            if on_ready is not None:
+                                on_ready(False)
+                        if observer is None and current_identity is not None:
+                            observer = attach_observer()
+                            watched_identity = current_identity
+                            if observer is not None and on_ready is not None:
+                                on_ready(True)
                     self.scan()
                     waiting = self.state.db.execute(
                         "SELECT 1 FROM jobs WHERE state='waiting_stability' LIMIT 1"
@@ -485,6 +604,8 @@ class Engine:
                         if waiting
                         else self.config.reconcile_seconds
                     )
+                    if not once and observer is None:
+                        interval = min(5, interval)
                     next_scan = time.monotonic() + interval
                 if self.process_one():
                     continue

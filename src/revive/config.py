@@ -25,10 +25,12 @@ class Config:
     denoise_strength: float = 0
     contrast_strength: float = 0
     colorization_enabled: bool = False
+    colorization_model: str = "ddcolor_tiny"
     colorization_strength: float = 0.85
     colorize_sepia: bool = False
     colorization_input_size: int = 256
     sr_enabled: bool = False
+    sr_model: str = "swinir_lightweight_x2"
     sr_target_long_edge: int = 4096
     sr_tile_size: int = 128
     max_output_megapixels: int = 64
@@ -43,6 +45,10 @@ class Config:
     delays_seconds: tuple[int, ...] = (60, 300, 1800)
 
     def validate(self):
+        if self.colorization_model not in ("ddcolor_tiny", "ddcolor_modelscope"):
+            raise ReviveError("CONFIG_INVALID", "Unknown colorization model.")
+        if self.sr_model not in ("swinir_lightweight_x2", "realesrgan_x2plus"):
+            raise ReviveError("CONFIG_INVALID", "Unknown super-resolution model.")
         roots = (self.input, self.output, self.app_data)
         for root in roots:
             check_plain_path(root)
@@ -123,6 +129,14 @@ class Config:
                 "CONFIG_INVALID",
                 "worker_memory_mib must be a nonnegative integer (0 = auto).",
             )
+        if (
+            self.colorization_model == "ddcolor_modelscope"
+            or self.sr_model == "realesrgan_x2plus"
+        ) and self.worker_memory_mib > 12288:
+            raise ReviveError(
+                "CONFIG_INVALID",
+                "The quality profile supports at most 12 GiB per worker.",
+            )
         for name in ("recursive", "process_existing"):
             if type(getattr(self, name)) is not bool:
                 raise ReviveError("CONFIG_INVALID", f"{name} must be boolean.")
@@ -176,12 +190,14 @@ class Config:
                 pillow_version=version("Pillow"),
             )
         if self.colorization_enabled:
-            from .models import SOURCE_REVISION, WEIGHT_SHA256
+            from .models import model_info
+
+            asset = model_info(self.colorization_model)
 
             policy.update(
                 colorization_protocol=1,
-                colorization_model=WEIGHT_SHA256,
-                model_source=SOURCE_REVISION,
+                colorization_model=asset["sha256"],
+                model_source=asset["source_revision"],
                 colorization_strength=self.colorization_strength,
                 colorize_sepia=self.colorize_sepia,
                 input_size=self.colorization_input_size,
@@ -193,19 +209,22 @@ class Config:
                 except PackageNotFoundError:
                     policy[package] = "unavailable"
         if self.sr_enabled:
-            from .swinir_model import SOURCE_REVISION as SR_SOURCE
-            from .swinir_model import WEIGHT_SHA256 as SR_HASH
+            from .models import model_info
+
+            asset = model_info(self.sr_model)
 
             policy.update(
                 sr_protocol=1,
-                sr_model=SR_HASH,
-                sr_source=SR_SOURCE,
+                sr_model=asset["sha256"],
+                sr_source=asset["source_revision"],
                 sr_target_long_edge=self.sr_target_long_edge,
                 sr_tile_size=self.sr_tile_size,
                 sr_context=32,
                 max_output_megapixels=self.max_output_megapixels,
                 sr_cpu_threads=self.cpu_threads,
             )
+            if self.sr_model == "realesrgan_x2plus":
+                policy.update(sr_pre_pad=10, sr_alignment=2)
             for package in ("torch", "numpy"):
                 try:
                     policy[package] = version(package)
@@ -216,19 +235,33 @@ class Config:
     def worker_settings(self):
         from .resources import worker_budget_mib, worker_commit_budget_mib
 
+        if (
+            self.colorization_enabled
+            and self.colorization_model == "ddcolor_modelscope"
+        ):
+            from .resources import quality_budget_mib
+
+            physical = quality_budget_mib(self.worker_memory_mib)
+            commit = quality_budget_mib(self.worker_memory_mib, commit=True)
+        else:
+            physical = worker_budget_mib(self.worker_memory_mib)
+            commit = worker_commit_budget_mib(self.worker_memory_mib)
+
         return {
             "max_input_megapixels": self.max_input_megapixels,
             "adapter": self.adapter,
             "denoise_strength": self.denoise_strength,
             "contrast_strength": self.contrast_strength,
-            "worker_memory_mib": worker_budget_mib(self.worker_memory_mib),
-            "worker_commit_mib": worker_commit_budget_mib(self.worker_memory_mib),
+            "worker_memory_mib": physical,
+            "worker_commit_mib": commit,
             "min_free_disk_mib": self.min_free_disk_mib,
             "colorization_enabled": self.colorization_enabled,
+            "colorization_model": self.colorization_model,
             "colorization_strength": self.colorization_strength,
             "colorize_sepia": self.colorize_sepia,
             "colorization_input_size": self.colorization_input_size,
             "sr_enabled": self.sr_enabled,
+            "sr_model": self.sr_model,
             "sr_target_long_edge": self.sr_target_long_edge,
             "sr_tile_size": self.sr_tile_size,
             "max_output_megapixels": self.max_output_megapixels,
@@ -252,8 +285,14 @@ def load_config(path: Path) -> Config:
                 "reconcile_seconds",
             },
             "pipeline": {"adapter", "denoise_strength", "contrast_strength"},
-            "colorization": {"enabled", "strength", "include_sepia", "input_size"},
-            "super_resolution": {"enabled", "target_long_edge", "tile_size"},
+            "colorization": {
+                "enabled",
+                "model",
+                "strength",
+                "include_sepia",
+                "input_size",
+            },
+            "super_resolution": {"enabled", "model", "target_long_edge", "tile_size"},
             "resources": {
                 "max_source_mib",
                 "max_input_megapixels",
@@ -278,6 +317,7 @@ def load_config(path: Path) -> Config:
             if group == "colorization":
                 aliases = {
                     "enabled": "colorization_enabled",
+                    "model": "colorization_model",
                     "strength": "colorization_strength",
                     "include_sepia": "colorize_sepia",
                     "input_size": "colorization_input_size",
@@ -286,6 +326,7 @@ def load_config(path: Path) -> Config:
             elif group == "super_resolution":
                 aliases = {
                     "enabled": "sr_enabled",
+                    "model": "sr_model",
                     "target_long_edge": "sr_target_long_edge",
                     "tile_size": "sr_tile_size",
                 }

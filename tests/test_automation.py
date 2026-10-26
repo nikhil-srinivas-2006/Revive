@@ -229,6 +229,42 @@ def test_worker_crash_bounded_retry(engine, config, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("previous_attempts", [0, 2, 4])
+def test_memory_admission_waits_without_exhausting_retries(
+    engine, config, monkeypatch, previous_attempts
+):
+    source = config.input / "waiting.png"
+    original = photo(source)
+    settle(engine)
+    row = engine.state.db.execute("SELECT * FROM jobs").fetchone()
+    engine.state.update(row["id"], attempts=previous_attempts)
+    real_worker = engine._worker
+
+    def low_memory(*args):
+        raise ReviveError("RAM_ADMISSION", "Insufficient worker budget.", True)
+
+    monkeypatch.setattr(engine, "_worker", low_memory)
+    for _ in range(config.max_attempts + 1):
+        engine.state.update(row["id"], next_attempt=0)
+        before = time.time()
+        assert engine.process_one()
+        current = engine.state.db.execute("SELECT * FROM jobs").fetchone()
+        assert current["state"] == "retry_pending"
+        assert current["error_code"] == "RAM_ADMISSION"
+        assert current["attempts"] == previous_attempts
+        assert current["next_attempt"] >= before + 60
+        assert not engine.process_one()
+    assert list(config.output.iterdir()) == []
+    assert not list(engine.work.iterdir())
+    assert source.read_bytes() == original
+    assert engine.state.db.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 0
+
+    monkeypatch.setattr(engine, "_worker", real_worker)
+    engine.state.update(row["id"], next_attempt=0)
+    assert engine.process_one()
+    assert engine.state.counts() == {"completed": 1}
+
+
 def test_source_changed_between_queue_and_snapshot_is_not_processed(engine, config):
     source = config.input / "a.png"
     photo(source)

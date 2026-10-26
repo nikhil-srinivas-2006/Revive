@@ -4,10 +4,7 @@ from pathlib import Path
 
 from .errors import ReviveError
 from .models import (
-    MODEL_ID,
-    SOURCE_REVISION,
-    WEIGHT_REVISION,
-    WEIGHT_SHA256,
+    model_info,
     verified_checkpoint,
 )
 
@@ -29,7 +26,10 @@ class DDColorAdapter:
 
     def predict(self, image):
         """Return Lab a/b at the fixed inference resolution, never generated luminance."""
-        with verified_checkpoint(Path(self.settings["app_data"])) as checkpoint:
+        asset = model_info(self.settings.get("colorization_model", "ddcolor_tiny"))
+        with verified_checkpoint(
+            Path(self.settings["app_data"]), asset["id"]
+        ) as checkpoint:
             try:
                 import cv2
                 import numpy as np
@@ -52,7 +52,7 @@ class DDColorAdapter:
                 # widths. A 32-pixel view yields the same parameter shapes without
                 # a full-size dummy inference or meta-device scalar incompatibility.
                 model = DDColor(
-                    encoder_name="convnext-t",
+                    encoder_name=asset.get("encoder", "convnext-t"),
                     input_size=(32, 32),
                     num_output_channels=2,
                     last_norm="Spectral",
@@ -107,18 +107,26 @@ class DDColorAdapter:
             raise ReviveError(
                 "INFERENCE_FAILED", "DDColor CPU inference failed."
             ) from exc
+        finally:
+            # Encoder hooks form cycles. Collect them before loading another
+            # model, otherwise both architectures can remain resident together.
+            import gc
+
+            del model, tensor
+            gc.collect()
         if output.shape != (size, size, 2) or not np.isfinite(output).all():
             raise ReviveError("OUTPUT_INVALID", "Colorizer produced invalid chroma.")
         return output
 
     def colorize(self, image, strength):
+        asset = model_info(self.settings.get("colorization_model", "ddcolor_tiny"))
         chroma = self.predict(image)
         output, max_error = reconstruct_chroma(image, chroma, strength)
         return output, {
-            "model": MODEL_ID,
-            "weight_sha256": WEIGHT_SHA256,
-            "weight_revision": WEIGHT_REVISION,
-            "source_revision": SOURCE_REVISION,
+            "model": asset["id"],
+            "weight_sha256": asset["sha256"],
+            "weight_revision": asset["weight_revision"],
+            "source_revision": asset["source_revision"],
             "input_size": self.settings.get("colorization_input_size", 256),
             "backend": "pytorch_cpu_fp32",
             "max_lab_l_error": max_error,

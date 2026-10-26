@@ -4,8 +4,11 @@ A local Windows photo-processing engine under development. The **normalize_png**
 adapter inspects photographs, applies EXIF orientation once, converts valid embedded
 profiles to sRGB, and publishes lossless 8-bit PNG derivatives. Originals remain
 unchanged. Optional conventional cleanup is disabled by default. An optional local
-**DDColor Tiny** stage now colorizes eligible grayscale inputs. Super-resolution
-and face restoration are not implemented yet.
+**DDColor-L ModelScope** stage colorizes eligible grayscale inputs, followed by
+tiled **Real-ESRGAN x2plus** upscaling for images below the resolution target.
+DDColor Tiny and SwinIR remain available as lightweight compatibility choices.
+The setup template enables automatic selection of both stages. Face restoration
+remains unimplemented. See [local quality setup and limits](docs/LOCAL_QUALITY.md).
 
 The **mock_copy** adapter remains available for byte-identical automation tests.
 Output names distinguish `_normalized_` derivatives from `_mockcopy_` copies.
@@ -18,7 +21,7 @@ Current scope and remaining work are tracked in [implementation status](docs/IMP
 Python 3.11 and uv are recommended. From the repository root:
 
 ```powershell
-uv sync --locked --extra dev --python 3.11
+uv sync --locked --extra dev --extra colorization --extra super-resolution --python 3.11
 Copy-Item configs/example.toml config.local.toml
 ```
 
@@ -36,20 +39,39 @@ yourself; Revive creates only output and application-data directories. Configura
 misspelled keys and unimplemented adapters produce an error.
 
 The current workspace's ignored `config.local.toml` uses `test_photos/` as input,
-`.runtime/png_output/` for PNG derivatives and `.runtime/png_state/` for processing
-state. The earlier mock-copy outputs/state are preserved separately.
+`.runtime/quality_output/` for PNG derivatives and `.runtime/quality_state/`
+for processing state. Earlier qualification outputs/state are preserved separately.
 The local configuration and test photographs are excluded from version control.
 
 ```powershell
 .venv\Scripts\python.exe -m revive --config config.local.toml validate-config
+.venv\Scripts\python.exe -m revive --config config.local.toml models install --model ddcolor_modelscope
+.venv\Scripts\python.exe -m revive --config config.local.toml models install --model realesrgan_x2plus
 .venv\Scripts\python.exe -m revive --config config.local.toml doctor
-.venv\Scripts\python.exe -m revive --config config.local.toml run --once
+.venv\Scripts\python.exe -m revive --config config.local.toml start
 ```
+
+Model installation is a one-time setup step. Once the monitor is started,
+copy photographs into the input folder. No per-photo command or profile selection
+is needed. The same settings handle these cases:
+
+| Original | Automatic action |
+| --- | --- |
+| Confidently grayscale, below target | Colorize, then upscale |
+| Already colored, below target | Upscale only |
+| Confidently grayscale, at/above target | Colorize only |
+| Already colored, at/above target | Normalize orientation/profile only |
+
+The resolution decision uses pixel dimensions, with a default target of 4096 on
+the long edge and a maximum 2x enlargement. It does not diagnose blur or guarantee
+recovered detail. Sepia/uncertain colors and transparency retain their conservative
+bypass rules. RAM, disk and timeout limits still apply; a resource failure is
+reported for retry rather than silently declared a successful enhancement.
 
 `--once` waits for discovered images to settle, processes immediately runnable jobs,
 then exits. Future retry attempts remain durable for the next invocation. Continuous
-operation uses `run` without `--once`; Ctrl+C requests shutdown after the active
-bounded worker attempt. No autostart task is installed automatically.
+operation uses `run` without `--once`; Ctrl+C cooperatively interrupts an active
+worker and preserves its job for resumption. No autostart task is installed automatically.
 
 ```powershell
 .venv\Scripts\python.exe -m revive --config config.local.toml run
@@ -129,8 +151,8 @@ silently discarding color interpretation or reducing precision.
 
 Alpha is preserved; no background is flattened. PNG encoding is lossless, but the
 derivative is 8-bit sRGB and is not an archival replacement for a higher-precision
-original. No resize, crop, sharpening, scratch reconstruction, or generative editing
-is performed. Every encoded PNG is reopened and compared against the planned pixels,
+original. With both AI stages disabled, normalization does not resize or infer
+colors/details. Every encoded PNG is reopened and compared against the planned pixels,
 dimensions, mode, orientation, and color profile before publication.
 
 Descriptive EXIF and PNG text are carried forward where supported. Structural EXIF
@@ -157,9 +179,10 @@ Each cleanup strength accepts 0–0.25. A nonzero setting enables mild median-fi
 blending or tonal adjustment only when inspection evidence passes the current
 conservative gate. Transparency bypasses cleanup. Keep strengths at zero for
 faithful normalization; review representative results before enabling cleanup.
-Applied stages and skip reasons are recorded; inferred colors are always false.
+Applied stages and skip reasons are recorded; inferred colors are marked only when
+the separate colorization stage actually runs.
 
-`[resources].worker_memory_mib = 0` selects a physical-RAM admission budget from
+For lightweight models, `[resources].worker_memory_mib = 0` selects a physical-RAM admission budget from
 the smaller of 2 GiB, one quarter of physical RAM, and half the currently available
 RAM; unavailable OS data falls back to 512 MiB. Windows additionally computes a
 committed-memory ceiling from the smaller of 2 GiB, one quarter of physical RAM,
@@ -171,8 +194,10 @@ that breaches its commit ceiling. Other operating
 systems currently have admission checks only and are not production-qualified.
 Disk preflight reserves room for the uncompressed PNG estimate and configured
 free-space reserve; actual disk errors remain recoverable.
+The larger DDColor-L profile uses separate automatic ceilings up to 12 GiB while
+reserving half available memory. See [memory policy](docs/LOCAL_QUALITY.md).
 
-## Optional local colorization
+## Lightweight colorization compatibility profile
 
 Use a separate output/application-data directory when trying colorization on photos
 already completed by another pipeline. Choose those directories before installing
@@ -180,11 +205,11 @@ weights: models are stored under the selected application-data root.
 
 ```powershell
 uv sync --locked --extra dev --extra colorization --python 3.11
-.venv\Scripts\python.exe -m revive --config config.local.toml models status
-.venv\Scripts\python.exe -m revive --config config.local.toml models install
+.venv\Scripts\python.exe -m revive --config config.local.toml models status --model ddcolor_tiny
+.venv\Scripts\python.exe -m revive --config config.local.toml models install --model ddcolor_tiny
 ```
 
-`models install` explicitly downloads the author's pinned 220 MB Apache-2.0
+The Tiny install explicitly downloads the author's pinned 220 MB Apache-2.0
 checkpoint and verifies its published SHA-256 before publication. It never
 overwrites a conflicting asset. Runtime, doctor and model status operate offline;
 missing/corrupt weights produce actionable errors. For offline setup, copy the exact
@@ -196,6 +221,7 @@ colorization is enabled; base-only sync removes optional packages.
 ```toml
 [colorization]
 enabled = true
+model = "ddcolor_tiny"
 strength = 0.85
 include_sepia = false
 input_size = 256
@@ -222,13 +248,13 @@ view is experimental and may require a larger explicitly configured commit budge
 the automatic cap is not raised to force a job through. CPU threads default to two
 and can be configured from 1–8 in `[resources].cpu_threads`. No GPU is allocated.
 
-The workspace's separate qualification configuration is `.runtime/colorization.toml`.
-Its outputs are in `.runtime/colorized_output/`; `config.local.toml` still uses the
-normalization-only path. The author checkpoint has been installed for qualification.
+The earlier Tiny qualification configuration is `.runtime/colorization.toml`.
+Its outputs remain in `.runtime/colorized_output/`; the everyday `config.local.toml`
+now selects the larger-model quality profile.
 See [qualification evidence and limits](docs/COLORIZATION_QUALIFICATION.md) for
 source licenses, asset digests, measured memory, and outstanding review gates.
 
-## Optional 2x super-resolution
+## Lightweight upscaling compatibility profile
 
 SwinIR lightweight x2 is available as an offline CPU stage after normalization,
 cleanup and optional colorization. Install the extra and its selected checkpoint
@@ -242,12 +268,13 @@ revive --config config.local.toml models status --model swinir_lightweight_x2
 
 The `colorization` extra can be omitted when only upscaling is needed. Keep the
 extras you use in subsequent `uv sync` commands. The default `models install`
-command still selects DDColor Tiny. Both checkpoints belong to the configuration's
+command selects the configured colorizer. Both checkpoints belong to the configuration's
 application directory; a separate development configuration uses separate assets.
 
 ```toml
 [super_resolution]
 enabled = true
+model = "swinir_lightweight_x2"
 target_long_edge = 4096
 tile_size = 128
 ```
@@ -270,6 +297,41 @@ Development configuration: `.runtime/super_resolution.toml`; outputs:
 `.runtime/upscaled_output/`. See [qualification evidence](docs/SUPER_RESOLUTION_QUALIFICATION.md)
 for source/weight digests, measurements, resource limits and remaining gates.
 
+## Background monitor controls
+
+```powershell
+revive --config config.local.toml start
+revive --config config.local.toml status
+revive --config config.local.toml stop
+revive --config config.local.toml restart
+```
+
+`start` launches a windowless monitor on Windows and waits for readiness. Repeating
+it with the same settings returns the current monitor; changed settings require
+`restart`. Stop interrupts an active worker safely, retaining its job for resumption
+without consuming a retry attempt. Publication already underway may finish. A
+restart continues the durable queue. Stop the monitor before editing failed jobs
+with `retry JOB_ID` or installing model checkpoints.
+
+`status` includes running/readiness state, heartbeat, native-event versus
+reconciliation mode, and the latest 20 failed/retry-pending jobs with recovery
+guidance. Control targets a unique run token rather than terminating a saved PID.
+Native watches are reattached after input-directory replacement, and long
+scheduling gaps trigger reconciliation.
+
+The development alias `.runtime/background.toml` now uses the same automatic
+settings, output and state as `config.local.toml`. Both address the same monitor.
+The new state includes existing `test_photos/` on its first run; earlier outputs
+remain untouched. Use `start` when you want monitoring to continue.
+
+```powershell
+revive --config .runtime/background.toml startup export
+```
+
+This exports a current-user, least-privilege login-task definition for review.
+Export does not register a task. See [background operation](docs/BACKGROUND_OPERATION.md)
+for lifecycle behavior, the validated XML, and deployment/testing work remaining.
+
 ## Current boundaries
 
 Application path checks are **not OS-enforced isolation**. The normal user account
@@ -284,13 +346,14 @@ is preferable where available. Notifications currently use durable incidents and
 logs only. Large-image memory measurements, notification delivery, suspend-aware
 timeouts, disk-history retention, and sustained archive-scale event handling remain
 release gates. No GPU backend, face enhancement, scratch
-reconstruction or Drive API exists yet. Colorization remains disabled in the shared
-template until users explicitly complete setup and review representative results.
+reconstruction or Drive API exists yet. The automatic template requires both
+local model checkpoints to be installed during setup. Broader laptop and visual
+quality qualification remain pending.
 
 ## Development checks
 
 ```powershell
-uv sync --locked --extra dev --python 3.11
+uv sync --locked --extra dev --extra colorization --extra super-resolution --python 3.11
 .venv\Scripts\python.exe -m pytest -q
 .venv\Scripts\ruff.exe check src tests
 .venv\Scripts\ruff.exe format --check src tests

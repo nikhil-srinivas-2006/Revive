@@ -1,6 +1,7 @@
 # Copy to config.local.toml and choose three disjoint absolute paths.
 # Replace these environment references with absolute paths, or set the variables.
-# Normalize orientation and profiles into lossless PNG; no AI models are used.
+# Automatically select colorization and upscaling for each incoming photo.
+# Install both local checkpoints once during setup (see README).
 schema_version = 1
 
 [paths]
@@ -23,16 +24,18 @@ denoise_strength = 0
 contrast_strength = 0
 
 [colorization]
-# Optional local DDColor Tiny stage. Install weights explicitly before enabling.
-enabled = false
+# Enabled means inspect every photo, not colorize every photo.
+enabled = true
+model = "ddcolor_modelscope"
 strength = 0.85
 # Sepia is ambiguous; keep disabled until results have been reviewed.
 include_sepia = false
-input_size = 256
+input_size = 512
 
 [super_resolution]
-# Optional CPU SwinIR x2; install its checkpoint explicitly before enabling.
-enabled = false
+# Upscale only below target_long_edge, at most 2x per source.
+enabled = true
+model = "realesrgan_x2plus"
 target_long_edge = 4096
 tile_size = 128
 
@@ -42,7 +45,7 @@ max_input_megapixels = 40
 max_output_megapixels = 64
 max_pending_jobs = 1000
 min_free_disk_mib = 512
-worker_timeout_seconds = 300
+worker_timeout_seconds = 1800
 # 0 = conservative automatic budget from total/available physical RAM.
 worker_memory_mib = 0
 cpu_threads = 2

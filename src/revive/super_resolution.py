@@ -28,12 +28,18 @@ def requirements(size, settings):
         )
     if target == size:
         return target, 0, 0, 0
-    native_pixels = ((size[0] + 7) // 8 * 16) * ((size[1] + 7) // 8 * 16)
+    # Real-ESRGAN additionally reflects ten right/bottom pixels before tiling.
+    pre_pad = 10 if settings.get("sr_model") == "realesrgan_x2plus" else 0
+    native_pixels = ((size[0] + pre_pad + 7) // 8 * 16) * (
+        (size[1] + pre_pad + 7) // 8 * 16
+    )
     image_bytes = source_pixels * 64 + native_pixels * 8 + output_pixels * 12
     tile = settings.get("sr_tile_size", 64)
     # Both options keep the model's largest inference view at or below 192x192.
     # A separate bounded probe checks the larger view before qualification.
     model_mib = {64: 512, 128: 512}[tile]
+    if settings.get("sr_model") == "realesrgan_x2plus":
+        model_mib = 768
     physical = model_mib + (image_bytes + 1024**2 - 1) // 1024**2
     commit = physical + 768
     # Encoded PNG upper allowance, plus scratch space. Source snapshot is separate.
@@ -61,10 +67,15 @@ def upscale_if_needed(image, settings, stages, notes):
             "Worker budget is below the super-resolution safety estimate.",
             True,
         )
-    from .swinir import SwinIRAdapter
+    if settings.get("sr_model", "swinir_lightweight_x2") == "realesrgan_x2plus":
+        from .realesrgan import RealESRGANAdapter
 
-    result, details = SwinIRAdapter(settings).upscale(image, target)
+        result, details = RealESRGANAdapter(settings).upscale(image, target)
+    else:
+        from .swinir import SwinIRAdapter
+
+        result, details = SwinIRAdapter(settings).upscale(image, target)
     image.close()
-    stages.append("swinir_lightweight_x2")
+    stages.append(settings.get("sr_model", "swinir_lightweight_x2"))
     notes.append("AI_UPSCALED_DETAILS_ARE_INFERRED")
     return result, {"enabled": True, "applied": True, **details}
